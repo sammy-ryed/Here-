@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+<?import javafx.scene.image.ImageView?>
+
+<VBox xmlns="http://javafx.com/javafx/17" xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="com.attendance.controller.TakeAttendanceController"
+      spacing="20" styleClass="content-pane">
+    
+    <padding>
+        <Insets top="20" right="20" bottom="20" left="20"/>
+    </padding>
+    
+    <Label text="Take Attendance" styleClass="page-title"/>
+    
+    <!-- Upload Section -->
+    <VBox spacing="10">
+        <Label text="Upload Classroom Photo" styleClass="section-title"/>
+        <HBox spacing="15" alignment="CENTER_LEFT">
+            <Button text="Upload Photo" onAction="#handleUploadPhoto" styleClass="secondary-button"/>
+            <Button text="Capture Photo" onAction="#handleCapturePhoto" styleClass="secondary-button"/>
+            <Region HBox.hgrow="ALWAYS"/>
+            <Button text="Process Attendance" onAction="#handleProcessAttendance" styleClass="primary-button" fx:id="processButton" disable="true"/>
+        </HBox>
+    </VBox>
+    
+    <!-- Image Preview -->
+    <VBox spacing="10">
+        <Label text="Preview" styleClass="section-title"/>
+        <StackPane styleClass="image-preview-pane" minHeight="300" maxHeight="400">
+            <ImageView fx:id="imagePreview" preserveRatio="true" fitWidth="600" fitHeight="400"/>
+            <Label fx:id="noImageLabel" text="No image selected" styleClass="placeholder-text"/>
+        </StackPane>
+    </VBox>
+    
+    <!-- Progress Bar -->
+    <ProgressBar fx:id="progressBar" progress="0" prefWidth="Infinity" visible="false"/>
+    <Label fx:id="statusLabel" text="" styleClass="status-message"/>
+    
+    <!-- Results Section -->
+    <VBox fx:id="resultsPane" spacing="15" visible="false">
+        <Separator/>
+        <Label text="Attendance Results" styleClass="section-title"/>
+        
+        <HBox spacing="20" alignment="TOP_LEFT">
+            <!-- Present Students -->
+            <VBox spacing="10" HBox.hgrow="ALWAYS">
+                <Label text="✓ Present Students" styleClass="result-section-title present-title"/>
+                <ListView fx:id="presentList" VBox.vgrow="ALWAYS" minHeight="200"/>
+            </VBox>
+            
+            <!-- Absent Students -->
+            <VBox spacing="10" HBox.hgrow="ALWAYS">
+                <Label text="✗ Absent Students" styleClass="result-section-title absent-title"/>
+                <ListView fx:id="absentList" VBox.vgrow="ALWAYS" minHeight="200"/>
+            </VBox>
+            
+            <!-- Unrecognized Faces -->
+            <VBox spacing="10" HBox.hgrow="ALWAYS">
+                <Label text="⚠ Unrecognized Faces" styleClass="result-section-title unrecognized-title"/>
+                <ListView fx:id="unrecognizedList" VBox.vgrow="ALWAYS" minHeight="200"/>
+            </VBox>
+        </HBox>
+        
+        <!-- Action Buttons -->
+        <HBox spacing="15" alignment="CENTER_LEFT">
+            <Button text="Save Attendance" onAction="#handleSaveAttendance" styleClass="primary-button"/>
+            <Button text="Export Report" onAction="#handleExportReport" styleClass="secondary-button"/>
+            <Button text="Clear Results" onAction="#handleClear" styleClass="secondary-button"/>
+        </HBox>
+    </VBox>
+    
+</VBox>

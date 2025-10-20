@@ -1,0 +1,23 @@
+# Quick Installation - Essential Packages Only
+# Python 3.13 Compatible Versions
+
+# Core Web Framework
+Flask==3.0.0
+Flask-CORS==4.0.0
+
+# Face Recognition (includes tensorflow automatically)
+deepface==0.0.92
+
+# TensorFlow Keras (required for retina-face with TensorFlow 2.20+)
+tf-keras>=2.20.0
+
+# Image Processing (Python 3.13 compatible)
+opencv-python==4.10.0.84
+Pillow==11.0.0
+
+# Scientific Computing (Python 3.13 compatible)
+numpy==1.26.4
+scikit-learn==1.5.2
+
+# Utilities
+python-dotenv==1.0.0

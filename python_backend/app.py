@@ -1,0 +1,674 @@
+"""
+Flask Backend for Face Recognition Attendance System
+Handles face registration and attendance processing using RetinaFace and ArcFace
+"""
+
+from flask import Flask, request, jsonify, send_file
+from flask_cors import CORS
+import os
+import numpy as np
+from datetime import datetime
+import logging
+from werkzeug.utils import secure_filename
+import base64
+from io import BytesIO
+from PIL import Image
+import cv2
+
+from utils.face_detector import FaceDetector
+from utils.face_recognizer import FaceRecognizer
+from db.database import Database
+
+# Initialize Flask app
+app = Flask(__name__)
+CORS(app)
+
+# Configuration
+UPLOAD_FOLDER = 'uploads'
+UNRECOGNIZED_FOLDER = 'unrecognized'
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg'}
+CONFIDENCE_THRESHOLD = 0.5  # Lowered from 0.6 for better detection in distant photos
+
+# Create necessary folders
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(UNRECOGNIZED_FOLDER, exist_ok=True)
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Initialize components
+face_detector = FaceDetector()
+face_recognizer = FaceRecognizer()
+database = Database()
+
+def allowed_file(filename):
+    """Check if file has an allowed extension"""
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+def save_image(file_data, filename):
+    """Save uploaded image file"""
+    filepath = os.path.join(UPLOAD_FOLDER, secure_filename(filename))
+    
+    if isinstance(file_data, str):
+        # Base64 encoded image
+        image_data = base64.b64decode(file_data.split(',')[1] if ',' in file_data else file_data)
+        with open(filepath, 'wb') as f:
+            f.write(image_data)
+    else:
+        # File object
+        file_data.save(filepath)
+    
+    return filepath
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    """Health check endpoint"""
+    return jsonify({
+        'status': 'healthy',
+        'timestamp': datetime.now().isoformat(),
+        'services': {
+            'face_detector': face_detector.is_ready(),
+            'face_recognizer': face_recognizer.is_ready(),
+            'database': database.is_connected()
+        }
+    })
+
+@app.route('/register_face', methods=['POST'])
+def register_face():
+    """
+    Register a new student with face images
+    Expected: name, roll_no, and multiple images
+    """
+    try:
+        # Get form data
+        name = request.form.get('name')
+        roll_no = request.form.get('roll_no')
+        
+        if not name or not roll_no:
+            return jsonify({'error': 'Name and roll number are required'}), 400
+        
+        # Get uploaded images
+        images = request.files.getlist('images')
+        
+        if not images or len(images) == 0:
+            return jsonify({'error': 'At least one image is required'}), 400
+        
+        logger.info(f"Registering student: {name} (Roll: {roll_no}) with {len(images)} images")
+        
+        # Process each image and extract embeddings
+        all_embeddings = []
+        processed_count = 0
+        
+        for idx, image_file in enumerate(images):
+            if image_file and allowed_file(image_file.filename):
+                # Save image temporarily
+                filename = f"{roll_no}_{idx}_{datetime.now().strftime('%Y%m%d%H%M%S')}.jpg"
+                filepath = save_image(image_file, filename)
+                
+                # Detect faces and extract embeddings
+                faces = face_detector.detect_faces(filepath)
+                
+                if len(faces) == 0:
+                    logger.warning(f"No face detected in image {idx + 1}")
+                    os.remove(filepath)
+                    continue
+                
+                if len(faces) > 1:
+                    logger.warning(f"Multiple faces detected in image {idx + 1}, using the largest face")
+                
+                # Get embedding from the largest face
+                largest_face = max(faces, key=lambda x: (x['bbox'][2] - x['bbox'][0]) * (x['bbox'][3] - x['bbox'][1]))
+                embedding = face_recognizer.get_embedding(filepath, largest_face)
+                
+                if embedding is not None:
+                    all_embeddings.append(embedding)
+                    processed_count += 1
+                
+                # Clean up temporary file
+                os.remove(filepath)
+        
+        if len(all_embeddings) == 0:
+            return jsonify({'error': 'No valid face embeddings could be extracted'}), 400
+        
+        # Average embeddings for better accuracy
+        avg_embedding = np.mean(all_embeddings, axis=0)
+        
+        # Store in database
+        student_id = database.add_student(name, roll_no, avg_embedding)
+        
+        # Store individual embeddings as well for better matching
+        for embedding in all_embeddings:
+            database.add_embedding(student_id, embedding)
+        
+        logger.info(f"Successfully registered {name} with {processed_count} face samples")
+        
+        return jsonify({
+            'success': True,
+            'student_id': student_id,
+            'name': name,
+            'roll_no': roll_no,
+            'samples_processed': processed_count
+        }), 201
+    
+    except Exception as e:
+        logger.error(f"Error in register_face: {str(e)}", exc_info=True)
+        return jsonify({'error': f'Registration failed: {str(e)}'}), 500
+
+@app.route('/process_attendance', methods=['POST'])
+def process_attendance():
+    """
+    Process attendance from classroom photo
+    Detects all faces and matches against registered students
+    """
+    try:
+        # Get uploaded image
+        if 'image' not in request.files:
+            return jsonify({'error': 'No image provided'}), 400
+        
+        image_file = request.files['image']
+        class_name = request.form.get('class_name', 'default')
+        
+        if not image_file or not allowed_file(image_file.filename):
+            return jsonify({'error': 'Invalid image file'}), 400
+        
+        logger.info(f"Processing attendance for class: {class_name}")
+        
+        # Save image temporarily
+        filename = f"attendance_{datetime.now().strftime('%Y%m%d%H%M%S')}.jpg"
+        filepath = save_image(image_file, filename)
+        
+        # Detect all faces in the image
+        faces = face_detector.detect_faces(filepath)
+        logger.info(f"Detected {len(faces)} faces in the image")
+        
+        if len(faces) == 0:
+            os.remove(filepath)
+            return jsonify({
+                'present': [],
+                'unrecognized': [],
+                'total_faces': 0,
+                'message': 'No faces detected in the image'
+            })
+        
+        # Get all registered students
+        all_students = database.get_all_students()
+        
+        # Process each detected face
+        recognized_students = []
+        unrecognized_faces = []
+        
+        for idx, face in enumerate(faces):
+            # Get embedding for this face
+            embedding = face_recognizer.get_embedding(filepath, face)
+            
+            if embedding is None:
+                continue
+            
+            # Match against registered students
+            match = face_recognizer.find_match(embedding, all_students, CONFIDENCE_THRESHOLD)
+            
+            if match:
+                student_id, confidence = match
+                student = database.get_student_by_id(student_id)
+                
+                if student and student['id'] not in [s['id'] for s in recognized_students]:
+                    recognized_students.append({
+                        'id': student['id'],
+                        'name': student['name'],
+                        'roll_no': student['roll_no'],
+                        'confidence': float(confidence)
+                    })
+                    logger.info(f"Recognized: {student['name']} (confidence: {confidence:.2f})")
+            else:
+                # Save unrecognized face
+                bbox = face['bbox']
+                face_img = Image.open(filepath)
+                face_crop = face_img.crop((bbox[0], bbox[1], bbox[2], bbox[3]))
+                
+                unrecognized_filename = f"unrecognized_{datetime.now().strftime('%Y%m%d%H%M%S')}_{idx}.jpg"
+                unrecognized_path = os.path.join(UNRECOGNIZED_FOLDER, unrecognized_filename)
+                face_crop.save(unrecognized_path)
+                
+                unrecognized_faces.append(unrecognized_filename)
+                logger.info(f"Unrecognized face saved: {unrecognized_filename}")
+        
+        # Clean up temporary file
+        os.remove(filepath)
+        
+        # Mark attendance for recognized students as present
+        today = datetime.now().strftime('%Y-%m-%d')
+        for student in recognized_students:
+            database.mark_attendance(student['id'], today, 'present')
+        
+        # Get today's attendance to check who is already marked present
+        today_attendance = database.get_attendance_by_date(today)
+        present_ids = [record['id'] for record in today_attendance if record.get('status') == 'present']
+        
+        # Get list of absent students (registered but not recognized AND not already marked present)
+        recognized_ids = [s['id'] for s in recognized_students]
+        absent_students = [s for s in all_students if s['id'] not in recognized_ids and s['id'] not in present_ids]
+        
+        # Mark absent students as absent in the database (only if not already present)
+        for student in absent_students:
+            database.mark_attendance(student['id'], today, 'absent')
+        
+        return jsonify({
+            'present': recognized_students,
+            'absent': [{'id': s['id'], 'name': s['name'], 'roll_no': s['roll_no']} for s in absent_students],
+            'unrecognized': unrecognized_faces,
+            'total_faces': len(faces),
+            'timestamp': datetime.now().isoformat()
+        })
+    
+    except Exception as e:
+        logger.error(f"Error in process_attendance: {str(e)}", exc_info=True)
+        return jsonify({'error': f'Attendance processing failed: {str(e)}'}), 500
+
+@app.route('/process_attendance_batch', methods=['POST'])
+def process_attendance_batch():
+    """
+    Process attendance from multiple classroom photos
+    Detects all faces across all photos and matches against registered students
+    """
+    try:
+        # Get uploaded images
+        if 'images' not in request.files:
+            return jsonify({'error': 'No images provided'}), 400
+        
+        image_files = request.files.getlist('images')
+        class_name = request.form.get('class_name', 'default')
+        
+        if not image_files or len(image_files) == 0:
+            return jsonify({'error': 'No images provided'}), 400
+        
+        logger.info(f"Processing batch attendance for class: {class_name} with {len(image_files)} photos")
+        
+        # Get all registered students
+        all_students = database.get_all_students()
+        
+        # Track recognized students across all photos (avoid duplicates)
+        all_recognized_students = {}  # student_id -> student info
+        all_unrecognized_faces = []
+        total_faces_count = 0
+        photos_processed = 0
+        
+        # Process each photo
+        for image_file in image_files:
+            if not allowed_file(image_file.filename):
+                logger.warning(f"Skipping invalid file: {image_file.filename}")
+                continue
+            
+            try:
+                # Save image temporarily
+                filename = f"attendance_{datetime.now().strftime('%Y%m%d%H%M%S')}_{photos_processed}.jpg"
+                filepath = save_image(image_file, filename)
+                
+                # Detect all faces in this image
+                faces = face_detector.detect_faces(filepath)
+                logger.info(f"Photo {photos_processed + 1}: Detected {len(faces)} faces")
+                total_faces_count += len(faces)
+                
+                # Process each detected face
+                for idx, face in enumerate(faces):
+                    # Get embedding for this face
+                    embedding = face_recognizer.get_embedding(filepath, face)
+                    
+                    if embedding is None:
+                        continue
+                    
+                    # Match against registered students
+                    match = face_recognizer.find_match(embedding, all_students, CONFIDENCE_THRESHOLD)
+                    
+                    if match:
+                        student_id, confidence = match
+                        
+                        # Only add if not already recognized (take highest confidence)
+                        if student_id not in all_recognized_students or confidence > all_recognized_students[student_id]['confidence']:
+                            student = database.get_student_by_id(student_id)
+                            
+                            if student:
+                                all_recognized_students[student_id] = {
+                                    'id': student['id'],
+                                    'name': student['name'],
+                                    'roll_no': student['roll_no'],
+                                    'confidence': float(confidence)
+                                }
+                                logger.info(f"Photo {photos_processed + 1}: Recognized {student['name']} (confidence: {confidence:.2f})")
+                    else:
+                        # Save unrecognized face
+                        bbox = face['bbox']
+                        face_img = Image.open(filepath)
+                        face_crop = face_img.crop((bbox[0], bbox[1], bbox[2], bbox[3]))
+                        
+                        unrecognized_filename = f"unrecognized_{datetime.now().strftime('%Y%m%d%H%M%S')}_{photos_processed}_{idx}.jpg"
+                        unrecognized_path = os.path.join(UNRECOGNIZED_FOLDER, unrecognized_filename)
+                        face_crop.save(unrecognized_path)
+                        
+                        all_unrecognized_faces.append(unrecognized_filename)
+                        logger.info(f"Unrecognized face saved: {unrecognized_filename}")
+                
+                # Clean up temporary file
+                os.remove(filepath)
+                photos_processed += 1
+                
+            except Exception as e:
+                logger.error(f"Error processing photo {image_file.filename}: {str(e)}")
+                continue
+        
+        # Convert recognized students dict to list
+        recognized_students = list(all_recognized_students.values())
+        
+        # Mark attendance for recognized students as present
+        today = datetime.now().strftime('%Y-%m-%d')
+        for student in recognized_students:
+            database.mark_attendance(student['id'], today, 'present')
+        
+        # Get today's attendance to check who is already marked present
+        today_attendance = database.get_attendance_by_date(today)
+        present_ids = [record['id'] for record in today_attendance if record.get('status') == 'present']
+        
+        # Get list of absent students (registered but not recognized AND not already marked present)
+        recognized_ids = list(all_recognized_students.keys())
+        absent_students = [s for s in all_students if s['id'] not in recognized_ids and s['id'] not in present_ids]
+        
+        # Mark absent students as absent in the database (only if not already present)
+        for student in absent_students:
+            database.mark_attendance(student['id'], today, 'absent')
+        
+        logger.info(f"Batch processing complete: {photos_processed} photos, {len(recognized_students)} students recognized")
+        
+        return jsonify({
+            'present': recognized_students,
+            'absent': [{'id': s['id'], 'name': s['name'], 'roll_no': s['roll_no']} for s in absent_students],
+            'unrecognized': all_unrecognized_faces,
+            'total_faces': total_faces_count,
+            'photos_processed': photos_processed,
+            'timestamp': datetime.now().isoformat()
+        })
+    
+    except Exception as e:
+        logger.error(f"Error in process_attendance_batch: {str(e)}", exc_info=True)
+        return jsonify({'error': f'Batch attendance processing failed: {str(e)}'}), 500
+
+@app.route('/unrecognized/<filename>', methods=['GET'])
+def get_unrecognized_face(filename):
+    """Serve unrecognized face image"""
+    try:
+        filepath = os.path.join(UNRECOGNIZED_FOLDER, secure_filename(filename))
+        if os.path.exists(filepath):
+            return send_file(filepath, mimetype='image/jpeg')
+        else:
+            return jsonify({'error': 'File not found'}), 404
+    except Exception as e:
+        logger.error(f"Error serving unrecognized face: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/students', methods=['GET'])
+def get_all_students():
+    """Get all registered students"""
+    try:
+        students = database.get_all_students()
+        return jsonify({
+            'students': [{'id': s['id'], 'name': s['name'], 'roll_no': s['roll_no']} for s in students],
+            'total': len(students)
+        })
+    except Exception as e:
+        logger.error(f"Error getting students: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/attendance/report', methods=['GET'])
+def get_attendance_report():
+    """Get attendance report for a specific date or date range"""
+    try:
+        start_date = request.args.get('start_date', datetime.now().strftime('%Y-%m-%d'))
+        end_date = request.args.get('end_date', start_date)
+        
+        report = database.get_attendance_report(start_date, end_date)
+        
+        return jsonify({
+            'report': report,
+            'start_date': start_date,
+            'end_date': end_date
+        })
+    except Exception as e:
+        logger.error(f"Error generating attendance report: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/dashboard/stats', methods=['GET'])
+def get_dashboard_stats():
+    """Get dashboard statistics including today's attendance"""
+    try:
+        today = datetime.now().strftime('%Y-%m-%d')
+        
+        # Get total students
+        all_students_data = database.get_all_students()
+        total_students = len(all_students_data)
+        
+        # Get today's attendance
+        today_attendance = database.get_attendance_by_date(today)
+        
+        # Create a map of student_id to attendance status
+        attendance_map = {}
+        for record in today_attendance:
+            if record.get('status'):
+                attendance_map[record['id']] = record['status']
+        
+        # Convert students to JSON-serializable format with attendance status
+        all_students = []
+        for student in all_students_data:
+            student_id = student['id']
+            # Get attendance status: 'present', 'absent', or 'N/A' if not recorded
+            attendance_status = attendance_map.get(student_id, 'N/A')
+            
+            all_students.append({
+                'id': student_id,
+                'name': student['name'],
+                'roll_no': student['roll_no'],
+                'attendance_status': attendance_status
+            })
+        
+        # Count present and absent
+        present_today = sum(1 for record in today_attendance if record.get('status') == 'present')
+        absent_today = total_students - present_today if present_today > 0 else 0
+        
+        # Calculate attendance rate
+        attendance_rate = (present_today / total_students * 100) if total_students > 0 else 0
+        
+        return jsonify({
+            'total_students': total_students,
+            'present_today': present_today,
+            'absent_today': absent_today,
+            'attendance_rate': round(attendance_rate, 1),
+            'date': today,
+            'students': all_students
+        })
+    except Exception as e:
+        logger.error(f"Error getting dashboard stats: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/student/<int:student_id>', methods=['DELETE'])
+def delete_student(student_id):
+    """Delete a student and their embeddings"""
+    try:
+        success = database.delete_student(student_id)
+        if success:
+            return jsonify({'success': True, 'message': 'Student deleted successfully'})
+        else:
+            return jsonify({'error': 'Student not found'}), 404
+    except Exception as e:
+        logger.error(f"Error deleting student: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/attendance/clear-today', methods=['POST'])
+def clear_today_attendance():
+    """Clear all attendance records for today"""
+    try:
+        today = datetime.now().strftime('%Y-%m-%d')
+        success = database.clear_attendance_by_date(today)
+        
+        if success:
+            logger.info(f"Cleared all attendance records for {today}")
+            return jsonify({
+                'success': True, 
+                'message': f'All attendance records for {today} have been cleared',
+                'date': today
+            })
+        else:
+            return jsonify({'error': 'Failed to clear attendance records'}), 500
+            
+    except Exception as e:
+        logger.error(f"Error clearing today's attendance: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/extract_faces', methods=['POST'])
+def extract_faces():
+    """
+    Extract all faces from a photo and return them as base64 images
+    Used for adding embeddings to existing students
+    """
+    try:
+        # Get uploaded image
+        if 'image' not in request.files:
+            return jsonify({'error': 'No image provided'}), 400
+        
+        image_file = request.files['image']
+        
+        if not image_file or not allowed_file(image_file.filename):
+            return jsonify({'error': 'Invalid image file'}), 400
+        
+        logger.info("Extracting faces from uploaded image")
+        
+        # Save image temporarily
+        filename = f"extract_{datetime.now().strftime('%Y%m%d%H%M%S')}.jpg"
+        filepath = save_image(image_file, filename)
+        
+        # Detect all faces in the image
+        faces = face_detector.detect_faces(filepath)
+        logger.info(f"Detected {len(faces)} faces")
+        
+        if len(faces) == 0:
+            os.remove(filepath)
+            return jsonify({
+                'faces': [],
+                'message': 'No faces detected in the image'
+            })
+        
+        # Read original image
+        img = cv2.imread(filepath)
+        
+        # Extract and encode each face
+        face_data_list = []
+        for idx, face in enumerate(faces):
+            # Extract face region
+            bbox = face['bbox']
+            x1, y1, x2, y2 = [int(coord) for coord in bbox]
+            
+            # Add margin
+            margin = 30
+            height, width = img.shape[:2]
+            x1 = max(0, x1 - margin)
+            y1 = max(0, y1 - margin)
+            x2 = min(width, x2 + margin)
+            y2 = min(height, y2 + margin)
+            
+            # Crop face
+            face_img = img[y1:y2, x1:x2]
+            
+            # Save face temporarily
+            face_filename = f"face_{idx}_{datetime.now().strftime('%Y%m%d%H%M%S')}.jpg"
+            face_path = os.path.join(UPLOAD_FOLDER, face_filename)
+            cv2.imwrite(face_path, face_img)
+            
+            # Convert to base64
+            _, buffer = cv2.imencode('.jpg', face_img)
+            face_base64 = base64.b64encode(buffer).decode('utf-8')
+            
+            face_data_list.append({
+                'index': int(idx),
+                'bbox': [float(coord) for coord in bbox],  # Convert numpy types to Python float
+                'confidence': float(face.get('confidence', 0.99)),  # Convert to Python float
+                'image_base64': f"data:image/jpeg;base64,{face_base64}",
+                'face_filename': face_filename
+            })
+        
+        # Clean up original image
+        os.remove(filepath)
+        
+        logger.info(f"Extracted {len(face_data_list)} faces successfully")
+        
+        return jsonify({
+            'faces': face_data_list,
+            'total_faces': len(face_data_list),
+            'timestamp': datetime.now().isoformat()
+        })
+    
+    except Exception as e:
+        logger.error(f"Error extracting faces: {str(e)}", exc_info=True)
+        return jsonify({'error': f'Face extraction failed: {str(e)}'}), 500
+
+@app.route('/add_embedding/<int:student_id>', methods=['POST'])
+def add_embedding_to_student(student_id):
+    """
+    Add a new face embedding to an existing student
+    Expects: face_filename (from extract_faces endpoint)
+    """
+    try:
+        # Get face filename
+        data = request.get_json()
+        face_filename = data.get('face_filename')
+        
+        if not face_filename:
+            return jsonify({'error': 'No face_filename provided'}), 400
+        
+        # Verify student exists
+        student = database.get_student_by_id(student_id)
+        if not student:
+            return jsonify({'error': f'Student with ID {student_id} not found'}), 404
+        
+        logger.info(f"Adding embedding to student {student_id}: {student['name']}")
+        
+        # Get face file path
+        face_path = os.path.join(UPLOAD_FOLDER, face_filename)
+        
+        if not os.path.exists(face_path):
+            return jsonify({'error': 'Face image not found'}), 404
+        
+        # Detect face in the cropped image
+        faces = face_detector.detect_faces(face_path)
+        
+        if len(faces) == 0:
+            return jsonify({'error': 'No face detected in the selected image'}), 400
+        
+        # Use the first (and should be only) face
+        face = faces[0]
+        
+        # Generate embedding
+        embedding = face_recognizer.get_embedding(face_path, face)
+        
+        if embedding is None:
+            return jsonify({'error': 'Failed to generate face embedding'}), 500
+        
+        # Add embedding to database
+        database.add_embedding(student_id, embedding)
+        
+        # Clean up face image
+        os.remove(face_path)
+        
+        logger.info(f"Successfully added embedding to student {student_id}")
+        
+        return jsonify({
+            'success': True,
+            'message': f"Successfully added embedding to {student['name']}",
+            'student_id': student_id,
+            'student_name': student['name']
+        })
+    
+    except Exception as e:
+        logger.error(f"Error adding embedding: {str(e)}", exc_info=True)
+        return jsonify({'error': f'Failed to add embedding: {str(e)}'}), 500
+
+if __name__ == '__main__':
+    logger.info("Starting Face Recognition Attendance System Backend...")
+    logger.info(f"Confidence threshold: {CONFIDENCE_THRESHOLD}")
+    app.run(host='0.0.0.0', port=5000, debug=False)  # Disable debug mode to avoid reloader issues

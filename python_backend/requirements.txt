@@ -1,0 +1,27 @@
+# Python Backend Requirements for Face Recognition Attendance System
+# Python 3.13 Compatible Versions
+
+# Web Framework
+Flask==3.0.0
+Flask-CORS==4.0.0
+Werkzeug==3.0.1
+
+# Face Detection and Recognition
+retina-face==0.0.17
+deepface==0.0.92
+
+# Deep Learning Frameworks
+tensorflow>=2.20.0
+tf-keras>=2.20.0
+
+# Image Processing (Python 3.13 compatible versions)
+opencv-python==4.10.0.84
+Pillow==11.0.0
+numpy==1.26.4
+
+# Machine Learning (Python 3.13 compatible)
+scikit-learn==1.5.2
+
+# Utilities
+python-dotenv==1.0.0
+requests==2.31.0
