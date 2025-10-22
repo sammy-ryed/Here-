@@ -77,17 +77,28 @@ class FaceRecognizer:
             
             # For small faces, upscale them for better embedding quality
             face_h, face_w = face_img.shape[:2]
+            # AGGRESSIVE: Upscale small faces more aggressively for better recognition
             if face_w < 112 or face_h < 112:  # ArcFace expects ~112x112
-                # Upscale to at least 112x112
-                scale = max(112 / face_w, 112 / face_h)
+                # Upscale to at least 224x224 (DOUBLE the normal size) for MUCH better quality
+                scale = max(224 / face_w, 224 / face_h)  # Increased from 112 to 224
                 new_w = int(face_w * scale * 1.5)  # Extra scaling for better quality
                 new_h = int(face_h * scale * 1.5)
                 face_img = cv2.resize(face_img, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
                 
-                # Apply denoising for upscaled images
+                # Apply STRONGER denoising for upscaled images
                 face_img = cv2.fastNlMeansDenoisingColored(face_img, None, 10, 10, 7, 21)
                 
-                logger.info(f"Upscaled small face from {face_w}x{face_h} to {new_w}x{new_h}")
+                # Apply sharpening to enhance features
+                kernel = np.array([[-1,-1,-1], [-1, 9,-1], [-1,-1,-1]])
+                face_img = cv2.filter2D(face_img, -1, kernel)
+                
+                logger.info(f"🔍 AGGRESSIVE UPSCALE: {face_w}x{face_h} → {new_w}x{new_h} for better recognition")
+            elif face_w < 200 or face_h < 200:  # Even medium-sized faces can benefit
+                # Apply enhancement for medium-sized faces
+                face_img = cv2.fastNlMeansDenoisingColored(face_img, None, 5, 5, 7, 21)
+                kernel = np.array([[-1,-1,-1], [-1, 9,-1], [-1,-1,-1]])
+                face_img = cv2.filter2D(face_img, -1, kernel)
+                logger.info(f"🔧 Enhanced medium face: {face_w}x{face_h}")
             
             # Save temporary face image
             temp_path = 'temp_face.jpg'
@@ -193,35 +204,62 @@ class FaceRecognizer:
             
             best_match = None
             best_similarity = threshold
+            all_similarities = []  # Track all similarities for debugging
             
             for student in student_list:
                 student_id = student['id']
                 student_name = student.get('name', 'Unknown')
+                student_max_sim = 0.0  # Track best similarity for this student
                 
                 # Check primary embedding from students table
                 if 'embedding' in student and student['embedding'] is not None:
                     student_embedding = np.frombuffer(student['embedding'], dtype=np.float32)
                     similarity = self.compare_embeddings(query_embedding, student_embedding)
+                    student_max_sim = max(student_max_sim, similarity)
                     
                     if similarity > best_similarity:
                         best_similarity = similarity
                         best_match = student_id
-                        logger.debug(f"Match found (primary): {student_name} with similarity {similarity:.3f}")
+                        logger.info(f"🎯 Match found (primary): {student_name} with similarity {similarity:.3f}")
                 
                 # Check additional embeddings from embeddings table
                 additional_embeddings = db.get_student_embeddings(student_id)
-                for emb_data in additional_embeddings:
+                for idx, emb_data in enumerate(additional_embeddings):
                     emb = np.frombuffer(emb_data['embedding'], dtype=np.float32)
                     similarity = self.compare_embeddings(query_embedding, emb)
+                    student_max_sim = max(student_max_sim, similarity)
                     
                     if similarity > best_similarity:
                         best_similarity = similarity
                         best_match = student_id
-                        logger.debug(f"Match found (additional): {student_name} with similarity {similarity:.3f}")
+                        logger.info(f"🎯 Match found (embedding #{idx+1}): {student_name} with similarity {similarity:.3f}")
+                
+                # Log best similarity for each student (for debugging)
+                all_similarities.append((student_name, student_max_sim, len(additional_embeddings) + 1))
+            
+            # Log detailed similarity report
+            logger.info(f"\n{'='*60}")
+            logger.info(f"🔍 SIMILARITY REPORT (Threshold: {threshold:.2f})")
+            logger.info(f"{'='*60}")
+            for name, sim, emb_count in sorted(all_similarities, key=lambda x: x[1], reverse=True):
+                status = "✅ MATCH" if sim > threshold else "❌ NO MATCH"
+                logger.info(f"{status} | {name:20s} | Similarity: {sim:.3f} | Embeddings: {emb_count}")
+            logger.info(f"{'='*60}\n")
             
             if best_match:
-                logger.info(f"Best match: Student ID {best_match} with confidence {best_similarity:.3f}")
+                logger.info(f"✅ BEST MATCH: Student ID {best_match} with confidence {best_similarity:.3f}")
                 return (best_match, best_similarity)
+            else:
+                if all_similarities:
+                    logger.warning(f"⚠️ NO MATCH FOUND! Best similarity was {max([s[1] for s in all_similarities]):.3f}, needed {threshold:.3f}")
+                else:
+                    logger.warning(f"⚠️ NO MATCH FOUND! No students in database.")
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error finding match: {str(e)}", exc_info=True)
+            return None
             
             return None
             

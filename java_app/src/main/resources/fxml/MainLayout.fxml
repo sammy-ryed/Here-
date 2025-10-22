@@ -13,6 +13,8 @@
             <Menu text="File">
                 <MenuItem text="Refresh" onAction="#handleRefresh"/>
                 <SeparatorMenuItem/>
+                <MenuItem text="Clear All Data" onAction="#handleClearAllData"/>
+                <SeparatorMenuItem/>
                 <MenuItem text="Exit" onAction="#handleExit"/>
             </Menu>
             <Menu text="Help">

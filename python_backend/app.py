@@ -27,7 +27,7 @@ CORS(app)
 UPLOAD_FOLDER = 'uploads'
 UNRECOGNIZED_FOLDER = 'unrecognized'
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg'}
-CONFIDENCE_THRESHOLD = 0.5  # Lowered from 0.6 for better detection in distant photos
+CONFIDENCE_THRESHOLD = 0.69  # AGGRESSIVE: Lowered to 30% for large group photos (40+ people)
 
 # Create necessary folders
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -194,34 +194,70 @@ def process_attendance():
         # Get all registered students
         all_students = database.get_all_students()
         
-        # Process each detected face
+        # Simple algorithm: Process each face one by one
         recognized_students = []
+        recognized_student_ids = set()  # Track who's already marked present
         unrecognized_faces = []
         
+        logger.info(f"\n{'='*60}")
+        logger.info(f"🔍 PROCESSING {len(faces)} DETECTED FACES")
+        logger.info(f"{'='*60}\n")
+        
         for idx, face in enumerate(faces):
+            logger.info(f"Face #{idx+1}:")
+            
             # Get embedding for this face
             embedding = face_recognizer.get_embedding(filepath, face)
             
             if embedding is None:
+                logger.info(f"  ❌ Failed to generate embedding, skipping\n")
                 continue
             
-            # Match against registered students
-            match = face_recognizer.find_match(embedding, all_students, CONFIDENCE_THRESHOLD)
+            # Check similarity against ALL students' embeddings
+            best_match_student = None
+            best_similarity = CONFIDENCE_THRESHOLD  # Must beat threshold
             
-            if match:
-                student_id, confidence = match
-                student = database.get_student_by_id(student_id)
+            for student in all_students:
+                # Skip students already marked present
+                if student['id'] in recognized_student_ids:
+                    continue
                 
-                if student and student['id'] not in [s['id'] for s in recognized_students]:
-                    recognized_students.append({
-                        'id': student['id'],
-                        'name': student['name'],
-                        'roll_no': student['roll_no'],
-                        'confidence': float(confidence)
-                    })
-                    logger.info(f"Recognized: {student['name']} (confidence: {confidence:.2f})")
+                max_similarity = 0.0
+                
+                # Check primary embedding
+                if 'embedding' in student and student['embedding'] is not None:
+                    student_embedding = np.frombuffer(student['embedding'], dtype=np.float32)
+                    similarity = face_recognizer.compare_embeddings(embedding, student_embedding)
+                    max_similarity = max(max_similarity, similarity)
+                
+                # Check additional embeddings
+                additional_embeddings = database.get_student_embeddings(student['id'])
+                for emb_data in additional_embeddings:
+                    emb = np.frombuffer(emb_data['embedding'], dtype=np.float32)
+                    similarity = face_recognizer.compare_embeddings(embedding, emb)
+                    max_similarity = max(max_similarity, similarity)
+                
+                # Track best match for this face
+                if max_similarity > best_similarity:
+                    best_similarity = max_similarity
+                    best_match_student = student
+            
+            # If we found a match, mark present
+            if best_match_student:
+                recognized_students.append({
+                    'id': best_match_student['id'],
+                    'name': best_match_student['name'],
+                    'roll_no': best_match_student['roll_no'],
+                    'confidence': float(best_similarity)
+                })
+                recognized_student_ids.add(best_match_student['id'])
+                logger.info(f"  ✅ MATCH: {best_match_student['name']} (similarity: {best_similarity:.3f})")
+                logger.info(f"  → Marked PRESENT\n")
             else:
-                # Save unrecognized face
+                # No match found - save as unrecognized
+                logger.info(f"  ❌ No match found (all similarities below {CONFIDENCE_THRESHOLD})")
+                logger.info(f"  → Saving as unrecognized\n")
+                
                 bbox = face['bbox']
                 face_img = Image.open(filepath)
                 face_crop = face_img.crop((bbox[0], bbox[1], bbox[2], bbox[3]))
@@ -231,7 +267,10 @@ def process_attendance():
                 face_crop.save(unrecognized_path)
                 
                 unrecognized_faces.append(unrecognized_filename)
-                logger.info(f"Unrecognized face saved: {unrecognized_filename}")
+        
+        logger.info(f"{'='*60}")
+        logger.info(f"📊 RESULTS: {len(recognized_students)} students marked PRESENT")
+        logger.info(f"{'='*60}\n")
         
         # Clean up temporary file
         os.remove(filepath)
@@ -487,7 +526,7 @@ def get_dashboard_stats():
         logger.error(f"Error getting dashboard stats: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-@app.route('/student/<int:student_id>', methods=['DELETE'])
+@app.route('/students/<int:student_id>', methods=['DELETE'])
 def delete_student(student_id):
     """Delete a student and their embeddings"""
     try:
@@ -519,6 +558,70 @@ def clear_today_attendance():
             
     except Exception as e:
         logger.error(f"Error clearing today's attendance: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/students/clear-all', methods=['DELETE'])
+def clear_all_students():
+    """Delete ALL students and their embeddings - DESTRUCTIVE!"""
+    try:
+        success = database.clear_all_students()
+        
+        if success:
+            logger.warning("⚠️ ALL STUDENTS AND EMBEDDINGS DELETED!")
+            return jsonify({
+                'success': True,
+                'message': 'All students and embeddings have been deleted'
+            })
+        else:
+            return jsonify({'error': 'Failed to clear all data'}), 500
+            
+    except Exception as e:
+        logger.error(f"Error clearing all students: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/attendance/mark', methods=['POST'])
+def mark_attendance():
+    """
+    Manually mark a student's attendance (present or absent)
+    Expected JSON: {"student_id": int, "status": "present" or "absent"}
+    """
+    try:
+        data = request.get_json()
+        
+        if not data or 'student_id' not in data or 'status' not in data:
+            return jsonify({'error': 'student_id and status are required'}), 400
+        
+        student_id = data['student_id']
+        status = data['status'].lower()
+        
+        if status not in ['present', 'absent']:
+            return jsonify({'error': 'status must be "present" or "absent"'}), 400
+        
+        # Get today's date
+        today = datetime.now().strftime('%Y-%m-%d')
+        
+        # Mark attendance in database
+        success = database.mark_attendance(student_id, today, status)
+        
+        if success:
+            # Get student info for logging
+            student = database.get_student_by_id(student_id)
+            student_name = student['name'] if student else f"ID {student_id}"
+            
+            logger.info(f"Manually marked {student_name} as {status} for {today}")
+            
+            return jsonify({
+                'success': True,
+                'message': f'Student marked as {status}',
+                'student_id': student_id,
+                'status': status,
+                'date': today
+            })
+        else:
+            return jsonify({'error': 'Failed to mark attendance'}), 500
+            
+    except Exception as e:
+        logger.error(f"Error marking attendance: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/extract_faces', methods=['POST'])

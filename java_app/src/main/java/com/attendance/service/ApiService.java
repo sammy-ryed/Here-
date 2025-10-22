@@ -629,5 +629,117 @@ public class ApiService {
             throw new Exception("Failed to add embedding: " + errorMsg);
         }
     }
+    
+    /**
+     * Mark a student's attendance manually
+     */
+    public boolean markStudentAttendance(int studentId, String status) throws Exception {
+        String endpoint = baseUrl + "/attendance/mark";
+        
+        URL url = new URL(endpoint);
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setRequestMethod("POST");
+        conn.setDoOutput(true);
+        conn.setRequestProperty("Content-Type", "application/json");
+        conn.setConnectTimeout(TIMEOUT);
+        conn.setReadTimeout(TIMEOUT);
+        
+        // Send request body
+        JsonObject requestBody = new JsonObject();
+        requestBody.addProperty("student_id", studentId);
+        requestBody.addProperty("status", status);
+        
+        try (OutputStream out = conn.getOutputStream();
+             OutputStreamWriter writer = new OutputStreamWriter(out, StandardCharsets.UTF_8)) {
+            writer.write(gson.toJson(requestBody));
+            writer.flush();
+        }
+        
+        int responseCode = conn.getResponseCode();
+        
+        if (responseCode == 200) {
+            String response = readResponse(conn);
+            conn.disconnect();
+            
+            JsonObject result = gson.fromJson(response, JsonObject.class);
+            boolean success = result.get("success").getAsBoolean();
+            
+            if (success) {
+                Logger.info("Marked student ID " + studentId + " as " + status);
+            } else {
+                Logger.warn("Failed to mark attendance for student ID " + studentId);
+            }
+            
+            return success;
+        } else {
+            String errorMsg = readResponse(conn);
+            conn.disconnect();
+            Logger.error("Failed to mark attendance: " + errorMsg);
+            throw new Exception("Failed to mark attendance: " + errorMsg);
+        }
+    }
+    
+    /**
+     * Delete a specific student and their embeddings
+     */
+    public boolean deleteStudent(int studentId) throws Exception {
+        String url = baseUrl + "/students/" + studentId;
+        HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+        conn.setRequestMethod("DELETE");
+        conn.setRequestProperty("Content-Type", "application/json");
+        
+        int responseCode = conn.getResponseCode();
+        
+        if (responseCode == 200) {
+            String response = readResponse(conn);
+            conn.disconnect();
+            
+            JsonObject result = gson.fromJson(response, JsonObject.class);
+            boolean success = result.get("success").getAsBoolean();
+            
+            if (success) {
+                Logger.info("Deleted student ID " + studentId);
+            }
+            
+            return success;
+        } else {
+            String errorMsg = readResponse(conn);
+            conn.disconnect();
+            Logger.error("Failed to delete student: " + errorMsg);
+            throw new Exception("Failed to delete student: " + errorMsg);
+        }
+    }
+    
+    /**
+     * Clear ALL students and embeddings - DESTRUCTIVE!
+     */
+    public boolean clearAllStudents() throws Exception {
+        String url = baseUrl + "/students/clear-all";
+        HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+        conn.setRequestMethod("DELETE");
+        conn.setRequestProperty("Content-Type", "application/json");
+        
+        int responseCode = conn.getResponseCode();
+        
+        if (responseCode == 200) {
+            String response = readResponse(conn);
+            conn.disconnect();
+            
+            JsonObject result = gson.fromJson(response, JsonObject.class);
+            boolean success = result.get("success").getAsBoolean();
+            
+            if (success) {
+                Logger.info("⚠️ ALL STUDENTS AND EMBEDDINGS CLEARED");
+            }
+            
+            return success;
+        } else {
+            String errorMsg = readResponse(conn);
+            conn.disconnect();
+            Logger.error("Failed to clear all data: " + errorMsg);
+            throw new Exception("Failed to clear all data: " + errorMsg);
+        }
+    }
 }
+
 

@@ -47,34 +47,37 @@ class FaceDetector:
             # For distant photos, upscale the image for better detection
             height, width = img.shape[:2]
             
-            # If image is large (>1000px), it's likely a distant group photo
-            # Upscale it for better face detection
-            if width > 1000 or height > 1000:
-                # Increase resolution by 1.5x for better small face detection
-                scale_factor = 1.5
+            # AGGRESSIVE: Always upscale for group photos to detect small faces
+            # If image is large (>800px), it's likely a group photo - upscale MORE
+            if width > 800 or height > 800:
+                # Increase resolution by 2x for MUCH better small face detection
+                scale_factor = 2.0  # Increased from 1.5x to 2x
                 new_width = int(width * scale_factor)
                 new_height = int(height * scale_factor)
                 img_upscaled = cv2.resize(img, (new_width, new_height), interpolation=cv2.INTER_CUBIC)
                 
-                # Apply sharpening to enhance face features
+                # Apply STRONGER sharpening to enhance face features
                 kernel = np.array([[-1,-1,-1],
-                                   [-1, 9,-1],
+                                   [-1, 10,-1],  # Increased center from 9 to 10
                                    [-1,-1,-1]])
                 img_upscaled = cv2.filter2D(img_upscaled, -1, kernel)
+                
+                # Apply contrast enhancement
+                img_upscaled = cv2.convertScaleAbs(img_upscaled, alpha=1.2, beta=10)
                 
                 # Save temporarily
                 temp_path = image_path.replace('.jpg', '_upscaled.jpg')
                 cv2.imwrite(temp_path, img_upscaled)
                 detection_path = temp_path
                 
-                logger.info(f"Upscaled image from {width}x{height} to {new_width}x{new_height} for better detection")
+                logger.info(f"AGGRESSIVE UPSCALE: {width}x{height} → {new_width}x{new_height} for large group photo")
             else:
                 detection_path = image_path
             
-            # Detect faces using RetinaFace with lower threshold for distant photos
+            # Detect faces using RetinaFace with stricter threshold
             faces = RetinaFace.detect_faces(
                 detection_path,
-                threshold=0.3,  # Lower threshold (default is 0.9) to detect more faces
+                threshold=0.4,  # STRICTER: Increased to 0.4 for better quality face detection
                 allow_upscaling=True  # Allow RetinaFace to upscale if needed
             )
             
@@ -98,14 +101,14 @@ class FaceDetector:
                 
                 # If we upscaled, scale bbox back to original coordinates
                 if detection_path != image_path:
-                    scale_factor = 1.5
+                    scale_factor = 2.0  # Updated to match new scale factor
                     bbox = [coord / scale_factor for coord in bbox]
                 
                 # Extract landmarks
                 landmarks = face_data['landmarks']
                 if detection_path != image_path:
                     # Scale landmarks back too
-                    scale_factor = 1.5
+                    scale_factor = 2.0  # Updated to match new scale factor
                     for landmark_key in landmarks:
                         landmarks[landmark_key] = tuple(coord / scale_factor for coord in landmarks[landmark_key])
                 
@@ -118,7 +121,7 @@ class FaceDetector:
                     'confidence': confidence
                 })
             
-            logger.info(f"Detected {len(detected_faces)} face(s) in {image_path}")
+            logger.info(f"✅ DETECTED {len(detected_faces)} FACE(S) in {image_path}")
             return detected_faces
             
         except Exception as e:

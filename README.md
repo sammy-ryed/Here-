@@ -39,12 +39,14 @@ This **Face Recognition Attendance System** is a comprehensive desktop applicati
 
 - 🚀 **High Accuracy** - 95%+ recognition rate with proper training data
 - ⚡ **Fast Processing** - Process group photos in 1-2 seconds
-- 👥 **Multi-Face Support** - Detect 50+ faces in a single photo
+- 👥 **Multi-Face Support** - Detect 40+ faces in a single photo
 - 📸 **Batch Processing** - Upload multiple photos at once
 - 🔄 **Real-Time Updates** - Auto-refreshing dashboard with live statistics
 - 🎯 **Smart Attendance** - Never overwrite present status with absent
+- ✋ **Manual Attendance** - Mark students Present/Absent manually from dashboard
 - 📊 **Comprehensive Dashboard** - View statistics, trends, and student lists
 - 🆕 **Update Student Recognition** - Add new face embeddings to existing students
+- 🗑️ **Data Management** - Delete individual students or clear all data
 - 🌐 **Offline Capable** - Works completely offline after setup
 - 🎨 **Modern UI** - Clean, intuitive interface with blue/white theme
 
@@ -61,22 +63,28 @@ This **Face Recognition Attendance System** is a comprehensive desktop applicati
 - **Face Validation** - Automatic face detection during registration
 - **Student List** - View all registered students with details
 - **Update Embeddings** - Add new face photos to existing students for improved recognition
+- **Delete Student** - Right-click on any student to delete them completely
+- **Clear All Data** - File menu option to delete all students and embeddings at once
 
 #### Attendance Processing
-- **Group Photo Recognition** - Detect and identify multiple students simultaneously
+- **Group Photo Recognition** - Detect and identify multiple students simultaneously (40+ people)
 - **Multi-Photo Support** - Process multiple classroom photos in one go
 - **Confidence Scoring** - See recognition confidence for each student
 - **Unrecognized Face Handling** - View faces that couldn't be identified
 - **Smart Status Logic** - Once marked present, never changes to absent
+- **Manual Attendance** - Mark students Present/Absent manually from dashboard
+- **Sequential Face Processing** - One-by-one face checking with duplicate prevention
 - **Retake Capability** - Easily retake photos if needed
-- **Distant Photo Support** - Enhanced detection for photos taken from far away (15+ people)
+- **Enhanced Detection** - Optimized for distant photos and large groups
 
 #### Dashboard & Analytics
 - **Real-Time Statistics** - Total students, present count, absent count, attendance rate
 - **Present Today Column** - Color-coded status (Green=Present, Red=Absent, Gray=N/A)
 - **Auto-Refresh** - Dashboard updates every 30 seconds automatically
 - **Student List** - Searchable list with attendance status
+- **Manual Attendance Control** - Present/Absent buttons for each student
 - **Clear Attendance** - Reset today's attendance with one click
+- **Context Menu** - Right-click on students for quick actions (Delete)
 - **Date-Based Tracking** - View attendance by specific dates
 
 #### Update Student Feature (NEW!)
@@ -117,24 +125,26 @@ This **Face Recognition Attendance System** is a comprehensive desktop applicati
 │                                                              │
 │  ┌────────────────────────────────────────────────────────┐ │
 │  │  Face Detection Module (RetinaFace)                    │ │
-│  │  - Multi-face detection                                │ │
-│  │  - Auto-upscaling for distant photos                   │ │
+│  │  - Multi-face detection (40+ people)                   │ │
+│  │  - Auto-upscaling for distant photos (2.0x)            │ │
 │  │  - Sharpening & enhancement                            │ │
-│  │  - Threshold: 0.7 (configurable)                       │ │
+│  │  - Detection Threshold: 0.4 (stricter)                 │ │
 │  └────────────────────────────────────────────────────────┘ │
 │                                                              │
 │  ┌────────────────────────────────────────────────────────┐ │
 │  │  Face Recognition Module (ArcFace via DeepFace)        │ │
-│  │  - Embedding generation                                │ │
+│  │  - Embedding generation (512-dimensional)              │ │
 │  │  - Multiple embeddings per student support             │ │
+│  │  - Sequential face processing algorithm                │ │
 │  │  - Cosine similarity matching                          │ │
-│  │  - Confidence threshold: 0.4 (for distant photos)      │ │
+│  │  - Recognition Threshold: 0.69 (configurable)          │ │
 │  └────────────────────────────────────────────────────────┘ │
 │                                                              │
 │  ┌────────────────────────────────────────────────────────┐ │
 │  │  Image Processing                                      │ │
-│  │  - Face upscaling for small faces                      │ │
+│  │  - Face upscaling for small faces (224x224)            │ │
 │  │  - Denoising (fastNlMeansDenoisingColored)            │ │
+│  │  - Contrast enhancement (alpha=1.2, beta=10)           │ │
 │  │  - Dynamic margins based on face size                  │ │
 │  └────────────────────────────────────────────────────────┘ │
 │                                                              │
@@ -187,8 +197,8 @@ This **Face Recognition Attendance System** is a comprehensive desktop applicati
 
 | Model | Purpose | Performance |
 |-------|---------|-------------|
-| **RetinaFace** | Face detection | Threshold: 0.7, Auto-upscaling 1.5x |
-| **ArcFace** | Face embeddings | 512-dimensional vectors, Cosine similarity |
+| **RetinaFace** | Face detection | Detection Threshold: 0.4, Auto-upscaling 2.0x |
+| **ArcFace** | Face embeddings | 512-dimensional vectors, Recognition Threshold: 0.69 |
 
 ---
 
@@ -365,14 +375,17 @@ Result: Student registered with 5 face embeddings
 6. Click **"Confirm Attendance"** to save
 
 **For Distant/Group Photos:**
-- System automatically upscales images >1000px
-- Applies sharpening for better feature detection
-- Uses confidence threshold of 0.4 (40%)
-- Can detect 15+ people in a single photo
+- System automatically upscales images >800px (2.0x scaling)
+- Applies sharpening and contrast enhancement for better feature detection
+- Uses recognition threshold of 0.69 (69%)
+- Uses detection threshold of 0.4 (40%)
+- Can detect 40+ people in a single photo
+- Sequential face processing prevents duplicate matches
 
 **Smart Attendance Logic:**
 - Once a student is marked "Present", subsequent photos won't change it to "Absent"
 - Prevents false absences from missed detections
+- Each student can only be matched once per photo (no duplicates)
 - To reset, use "Clear Today's Attendance" button on Dashboard
 
 ---
@@ -398,7 +411,10 @@ Result: Student registered with 5 face embeddings
 
 **Actions:**
 - 🔄 **Manual Refresh** - Click refresh icon to update stats
+- ✋ **Manual Attendance** - Click Present/Absent buttons next to each student
 - 🗑️ **Clear Today's Attendance** - Reset all today's records to N/A
+- 🗑️ **Delete Student** - Right-click on a student to delete them
+- 🗑️ **Clear All Data** - File menu → Clear All Data (deletes everything)
 - ⏰ **Auto-Refresh** - Dashboard updates every 30 seconds automatically
 
 ---
@@ -653,15 +669,66 @@ GET /unrecognized/<filename>
 
 ---
 
-#### Delete Student
+#### Mark Manual Attendance (NEW!)
 ```http
-DELETE /student/<student_id>
+POST /attendance/mark
+Content-Type: application/json
 ```
+**Parameters:**
+```json
+{
+  "student_id": 1,
+  "status": "present"
+}
+```
+
 **Response:**
 ```json
 {
   "success": true,
-  "message": "Student deleted successfully"
+  "message": "Student marked as present",
+  "student": {
+    "id": 1,
+    "name": "John Doe",
+    "roll_no": "2024001"
+  },
+  "status": "present",
+  "date": "2025-10-22"
+}
+```
+
+---
+
+#### Delete Student (NEW!)
+```http
+DELETE /students/<student_id>
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Student John Doe deleted successfully along with 5 embeddings and 30 attendance records"
+}
+```
+
+---
+
+#### Clear All Students (NEW!)
+```http
+DELETE /students/clear-all
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "All data cleared successfully",
+  "deleted": {
+    "students": 50,
+    "embeddings": 250,
+    "attendance_records": 1500
+  }
 }
 ```
 
@@ -683,14 +750,14 @@ DEBUG=False
 DATABASE_PATH=db/attendance.db
 
 # Face Recognition Settings
-CONFIDENCE_THRESHOLD=0.4
+CONFIDENCE_THRESHOLD=0.69
 MODEL_NAME=ArcFace
 DETECTION_BACKEND=retinaface
 
 # RetinaFace Settings
-RETINAFACE_THRESHOLD=0.7
-AUTO_UPSCALE_THRESHOLD=1000
-UPSCALE_FACTOR=1.5
+RETINAFACE_THRESHOLD=0.4
+AUTO_UPSCALE_THRESHOLD=800
+UPSCALE_FACTOR=2.0
 
 # Performance Settings
 USE_GPU=False
@@ -699,7 +766,8 @@ MAX_FACES_PER_IMAGE=50
 # Image Processing
 ENABLE_SHARPENING=True
 ENABLE_DENOISING=True
-SMALL_FACE_THRESHOLD=112
+ENABLE_CONTRAST_ENHANCEMENT=True
+SMALL_FACE_THRESHOLD=224
 
 # Logging
 LOG_LEVEL=INFO
@@ -858,9 +926,10 @@ mvn clean install -U
    - Add 5+ photos from different angles
    - Include various lighting conditions
 
-2. **Lower confidence threshold:**
-   - Edit `python_backend/.env`
-   - Set `CONFIDENCE_THRESHOLD=0.3`
+2. **Adjust confidence threshold:**
+   - Edit `python_backend/app.py` line 30
+   - Current: `CONFIDENCE_THRESHOLD = 0.69`
+   - Try lowering: `CONFIDENCE_THRESHOLD = 0.5` or `0.4`
    - Restart backend
 
 3. **Better photo quality:**
@@ -868,6 +937,12 @@ mvn clean install -U
    - Take photos from similar distance
    - Avoid blurry images
    - Face should be at least 100x100 pixels
+
+4. **Check detection threshold:**
+   - Edit `python_backend/utils/face_detector.py` line 80
+   - Current: `threshold=0.4`
+   - Try lowering: `threshold=0.3`
+   - Restart backend
 
 ---
 
@@ -879,9 +954,10 @@ mvn clean install -U
    - Faces should be clearly visible
    - Avoid extreme angles
 
-2. **Lower detection threshold:**
-   - Edit `python_backend/.env`
-   - Set `RETINAFACE_THRESHOLD=0.5`
+2. **Adjust detection threshold:**
+   - Edit `python_backend/utils/face_detector.py` line 80
+   - Current: `threshold=0.4`
+   - Try lowering: `threshold=0.3` or `0.2`
    - Restart backend
 
 3. **Use multiple photos:**
@@ -989,13 +1065,56 @@ Process multiple photos at once:
 
 ---
 
-### 3. Distant Photo Enhancements
+### 3. Sequential Face Processing Algorithm
+
+**NEW!** Improved recognition algorithm that prevents duplicate matches:
+
+**How It Works:**
+1. **Face-by-Face Processing:**
+   - System processes each detected face sequentially
+   - No parallel/batch matching that causes duplicates
+
+2. **Already-Present Prevention:**
+   - Tracks which students have been marked present
+   - Skips those students for remaining faces
+   - Prevents one student from matching multiple faces
+
+3. **Best Match Selection:**
+   - For each face, checks all students (except already present)
+   - Compares against ALL embeddings for each student
+   - Selects student with highest similarity above threshold
+
+4. **Threshold Validation:**
+   - Recognition threshold: 0.69 (69%)
+   - Face must exceed threshold to be matched
+   - Below threshold = saved as unrecognized
+
+**Example:**
+```
+Photo with 3 faces:
+Face #1: Best match = Alice (0.92) ✅ Mark present
+Face #2: Best match = Bob (0.88) ✅ Mark present  
+Face #3: Best match = Alice (0.91) ❌ Alice already present, skip
+         Next best = Charlie (0.65) ❌ Below 0.69 threshold
+         Result: Saved as unrecognized
+```
+
+**Benefits:**
+- ✅ No duplicate matches (one student = one face)
+- ✅ Processes 40+ person group photos accurately
+- ✅ Simple, predictable behavior
+- ✅ Handles multiple embeddings per student
+- ✅ Unrecognized faces saved for review
+
+---
+
+### 4. Distant Photo Enhancements
 
 Optimized for group photos taken from afar:
 
 **Automatic Enhancements:**
 1. **Auto-Upscaling:**
-   - Images >1000px upscaled 1.5x
+   - Images >800px upscaled 2.0x
    - Uses INTER_CUBIC interpolation
    - Better feature visibility
 
@@ -1004,20 +1123,25 @@ Optimized for group photos taken from afar:
    - Enhances facial features
    - Improves detection accuracy
 
-3. **Small Face Handling:**
-   - Faces <100x100px get special treatment
+3. **Contrast Enhancement:**
+   - Alpha: 1.2 (contrast multiplier)
+   - Beta: 10 (brightness adjustment)
+   - Makes facial features more distinct
+
+4. **Small Face Handling:**
+   - Faces <224x224px get special treatment
+   - Upscaled to 224x224 for better recognition
    - Dynamic margin (30px vs 20px)
-   - Additional upscaling
    - Denoising applied
 
-4. **Lower Thresholds:**
-   - Detection: 0.7 (RetinaFace)
-   - Recognition: 0.4 (Confidence)
-   - Optimized for distant photos
+5. **Current Thresholds:**
+   - Detection: 0.4 (RetinaFace - stricter)
+   - Recognition: 0.69 (Confidence - can be adjusted)
+   - Optimized for large group photos
 
 ---
 
-### 4. Smart Attendance Logic
+### 5. Smart Attendance Logic
 
 Prevents false absences:
 
@@ -1025,7 +1149,8 @@ Prevents false absences:
 1. Once marked "Present", stays present
 2. Subsequent photos can't change to "Absent"
 3. Only manual "Clear" can reset status
-4. Prevents missed detection false negatives
+4. Sequential processing prevents duplicate matches
+5. Manual override available from dashboard
 
 **Example:**
 ```
@@ -1044,7 +1169,65 @@ Final Status:
 
 ---
 
-### 5. Real-Time Dashboard
+### 6. Manual Attendance Control
+
+**NEW!** Override automatic recognition with manual controls:
+
+**From Dashboard:**
+1. View student list with current status
+2. Click **"Present"** button next to student name → Marks present
+3. Click **"Absent"** button next to student name → Marks absent
+4. Changes take effect immediately
+5. Dashboard refreshes to show new status
+
+**Use Cases:**
+- Student arrived late (not in photo)
+- Photo quality too poor for recognition
+- Special circumstances (medical leave, etc.)
+- Verify/correct automatic results
+
+**Button States:**
+- 🟢 Green "Present" = Marked present
+- 🔴 Red "Absent" = Marked absent
+- ⚪ Gray buttons = Not yet marked for today
+
+---
+
+### 7. Data Management
+
+**NEW!** Complete control over student data:
+
+**Delete Individual Student:**
+1. Go to Dashboard
+2. Right-click on student in table
+3. Select "Delete Student"
+4. Confirm deletion
+5. **Permanently deletes:**
+   - Student record
+   - All face embeddings
+   - All attendance history
+
+**Clear All Data:**
+1. Click **File** menu
+2. Select "Clear All Data"
+3. First confirmation: "Are you sure?"
+4. Second confirmation: "This CANNOT be undone!"
+5. **Permanently deletes:**
+   - All students
+   - All face embeddings
+   - All attendance records
+   - Complete database wipe
+
+**Safety Features:**
+- ⚠️ Double confirmation for clear all
+- ⚠️ Single confirmation for delete student
+- ⚠️ Warning messages show what will be deleted
+- ⚠️ No undo - deletions are permanent
+- ✅ Database cascade deletes prevent orphaned data
+
+---
+
+### 8. Real-Time Dashboard
 
 Auto-updating dashboard:
 
@@ -1397,9 +1580,21 @@ This project was built to automate attendance management in educational institut
 
 ## 📊 Project Status
 
-### Current Version: 2.0.0 (October 2025)
+### Current Version: 2.1.0 (October 2025)
 
 ### Recent Updates
+
+✅ **Version 2.1.0** (October 2025) - **LATEST**
+- **Manual Attendance Control:** Present/Absent buttons on dashboard
+- **Delete Student:** Right-click context menu to delete individual students
+- **Clear All Data:** File menu option to wipe all data (double confirmation)
+- **Sequential Face Processing:** Improved algorithm prevents duplicate matches
+- **Enhanced Detection:** Stricter threshold (0.4) for better face quality
+- **Optimized for Large Groups:** Successfully handles 40+ person photos
+- **Contrast Enhancement:** Alpha 1.2, Beta 10 for better feature visibility
+- **Face Upscaling:** Small faces upscaled to 224x224px
+- **Image Upscaling:** 2.0x scaling for distant photos >800px
+- **Bug Fixes:** Route corrections, button state management
 
 ✅ **Version 2.0.0** (October 2025)
 - Added "Update Student" feature for adding embeddings
@@ -1434,7 +1629,6 @@ This project was built to automate attendance management in educational institut
 - Role-based access control
 
 ---
-
 ## 📈 Statistics
 
 ### Project Metrics
@@ -1569,6 +1763,6 @@ deactivate
 
 ---
 
-*Last Updated: October 20, 2025*
-*Version: 2.0.0*
+*Last Updated: October 22, 2025*
+*Version: 2.1.0*
 *Maintained by: sammy-ryed*

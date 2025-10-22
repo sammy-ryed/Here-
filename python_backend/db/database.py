@@ -235,6 +235,9 @@ class Database:
             student_id: Student ID
             date: Date in YYYY-MM-DD format
             status: 'present' or 'absent'
+            
+        Returns:
+            bool: True if successful, False otherwise
         """
         try:
             conn = self.get_connection()
@@ -249,10 +252,11 @@ class Database:
             conn.close()
             
             logger.info(f"Marked student {student_id} as {status} on {date}")
+            return True
             
         except Exception as e:
             logger.error(f"Error marking attendance: {str(e)}")
-            raise
+            return False
     
     def get_attendance_by_date(self, date):
         """Get attendance records for a specific date"""
@@ -333,6 +337,34 @@ class Database:
             
         except Exception as e:
             logger.error(f"Error deleting student: {str(e)}")
+            raise
+    
+    def clear_all_students(self):
+        """Delete ALL students and their embeddings - DESTRUCTIVE!"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # Delete all students (embeddings and attendance will cascade delete due to foreign keys)
+            cursor.execute('DELETE FROM students')
+            students_deleted = cursor.rowcount
+            
+            # Delete all embeddings explicitly
+            cursor.execute('DELETE FROM embeddings')
+            embeddings_deleted = cursor.rowcount
+            
+            # Delete all attendance records
+            cursor.execute('DELETE FROM attendance')
+            attendance_deleted = cursor.rowcount
+            
+            conn.commit()
+            conn.close()
+            
+            logger.warning(f"⚠️ CLEARED ALL DATA: {students_deleted} students, {embeddings_deleted} embeddings, {attendance_deleted} attendance records")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error clearing all students: {str(e)}")
             raise
     
     def get_student_statistics(self, student_id):

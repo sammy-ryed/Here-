@@ -52,12 +52,13 @@
         
         <TableView fx:id="studentsTable" VBox.vgrow="ALWAYS">
             <columns>
-                <TableColumn fx:id="idColumn" text="ID" prefWidth="80"/>
-                <TableColumn fx:id="rollNoColumn" text="Roll No" prefWidth="120"/>
-                <TableColumn fx:id="nameColumn" text="Name" prefWidth="200"/>
-                <TableColumn fx:id="presentTodayColumn" text="Present Today" prefWidth="150"/>
-                <TableColumn fx:id="statusColumn" text="Status" prefWidth="120"/>
-                <TableColumn fx:id="lastAttendanceColumn" text="Last Attendance" prefWidth="180"/>
+                <TableColumn fx:id="idColumn" text="ID" prefWidth="60"/>
+                <TableColumn fx:id="rollNoColumn" text="Roll No" prefWidth="100"/>
+                <TableColumn fx:id="nameColumn" text="Name" prefWidth="180"/>
+                <TableColumn fx:id="presentTodayColumn" text="Present Today" prefWidth="120"/>
+                <TableColumn fx:id="statusColumn" text="Status" prefWidth="100"/>
+                <TableColumn fx:id="lastAttendanceColumn" text="Last Attendance" prefWidth="150"/>
+                <TableColumn fx:id="actionsColumn" text="Mark Attendance" prefWidth="160"/>
             </columns>
         </TableView>
     </VBox>

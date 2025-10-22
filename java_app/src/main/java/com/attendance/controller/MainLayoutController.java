@@ -5,6 +5,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ResourceBundle;
 
+import com.attendance.service.ApiService;
 import com.attendance.util.Logger;
 
 import javafx.application.Platform;
@@ -12,6 +13,8 @@ import javafx.fxml.FXML;
 import javafx.fxml.FXMLLoader;
 import javafx.fxml.Initializable;
 import javafx.scene.control.Alert;
+import javafx.scene.control.ButtonBar;
+import javafx.scene.control.ButtonType;
 import javafx.scene.control.Label;
 import javafx.scene.control.Tab;
 import javafx.scene.control.TabPane;
@@ -171,6 +174,62 @@ public class MainLayoutController implements Initializable {
         updateStatusBar("Refreshing...");
         // Refresh logic would go here
         updateStatusBar("Refreshed");
+    }
+    
+    @FXML
+    private void handleClearAllData() {
+        Logger.info("Clear all data requested");
+        
+        // Show confirmation dialog
+        Alert confirmAlert = new Alert(Alert.AlertType.WARNING);
+        confirmAlert.setTitle("Confirm Clear All Data");
+        confirmAlert.setHeaderText("⚠️ WARNING: This will delete ALL data!");
+        confirmAlert.setContentText("This action will permanently delete:\n" +
+                "• All students\n" +
+                "• All face embeddings\n" +
+                "• All attendance records\n\n" +
+                "This action CANNOT be undone!\n\n" +
+                "Are you sure you want to continue?");
+        
+        ButtonType yesButton = new ButtonType("Yes, Delete Everything", ButtonBar.ButtonData.YES);
+        ButtonType noButton = new ButtonType("No, Cancel", ButtonBar.ButtonData.NO);
+        confirmAlert.getButtonTypes().setAll(yesButton, noButton);
+        
+        confirmAlert.showAndWait().ifPresent(response -> {
+            if (response == yesButton) {
+                // User confirmed, proceed with deletion
+                try {
+                    ApiService apiService = new ApiService();
+                    apiService.clearAllStudents();
+                    
+                    Logger.info("All data cleared successfully");
+                    updateStatusBar("All data cleared");
+                    
+                    // Show success message
+                    Alert successAlert = new Alert(Alert.AlertType.INFORMATION);
+                    successAlert.setTitle("Success");
+                    successAlert.setHeaderText("All Data Cleared");
+                    successAlert.setContentText("All students, embeddings, and attendance records have been deleted.");
+                    successAlert.showAndWait();
+                    
+                    // Refresh dashboard
+                    refreshDashboard(true);
+                    
+                } catch (Exception e) {
+                    Logger.error("Failed to clear all data: " + e.getMessage());
+                    updateStatusBar("Failed to clear data");
+                    
+                    Alert errorAlert = new Alert(Alert.AlertType.ERROR);
+                    errorAlert.setTitle("Error");
+                    errorAlert.setHeaderText("Failed to Clear Data");
+                    errorAlert.setContentText("An error occurred: " + e.getMessage());
+                    errorAlert.showAndWait();
+                }
+            } else {
+                Logger.info("Clear all data cancelled by user");
+                updateStatusBar("Operation cancelled");
+            }
+        });
     }
     
     /**

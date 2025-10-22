@@ -410,8 +410,11 @@ public class AddEmbeddingsController implements Initializable {
         facesPane.getChildren().clear();
         facesSection.setVisible(false);
         
+        // Re-enable extract button if photo is selected (shouldn't happen in cancel, but just in case)
+        // The button will be properly enabled again when a new photo is selected
+        
         updateStatus("Ready to update student recognition");
-        Logger.info("Reset UI");
+        Logger.info("Reset UI - Ready for next update");
     }
     
     private void updateStatus(String message) {
