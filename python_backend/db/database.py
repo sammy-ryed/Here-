@@ -1,6 +1,7 @@
 """
 Database management for student records and attendance
 Using SQLite for simplicity (can be switched to MySQL)
+OPTIMIZED: Added caching for frequently accessed data
 """
 
 import sqlite3
@@ -8,18 +9,19 @@ import numpy as np
 from datetime import datetime
 import logging
 import os
+from functools import lru_cache
 
 logger = logging.getLogger(__name__)
 
 class Database:
-    """Database handler for attendance system"""
+    """Database handler for attendance system with caching"""
     
     def __init__(self, db_path='db/attendance.db'):
         """Initialize database connection"""
         self.db_path = db_path
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         self.init_database()
-        logger.info(f"Database initialized at {db_path}")
+        logger.info(f"Database initialized at {db_path} with caching enabled")
     
     def get_connection(self):
         """Get database connection"""
@@ -115,6 +117,9 @@ class Database:
             conn.commit()
             conn.close()
             
+            # Clear cache when new student is added
+            self.get_all_students_cached.cache_clear()
+            
             logger.info(f"Added student: {name} (ID: {student_id})")
             return student_id
             
@@ -147,19 +152,25 @@ class Database:
             conn.commit()
             conn.close()
             
+            # IMPORTANT: Clear cache for this student so new embedding is used!
+            # This ensures attendance matching uses the updated embeddings
+            self.get_student_embeddings_cached.cache_clear()
+            logger.info(f"✅ Cache cleared after adding embedding for student {student_id}")
+            
         except Exception as e:
             logger.error(f"Error adding embedding: {str(e)}")
             raise
     
-    def get_student_embeddings(self, student_id):
+    @lru_cache(maxsize=500)
+    def get_student_embeddings_cached(self, student_id):
         """
-        Get all additional embeddings for a student
+        Get all additional embeddings for a student (CACHED)
         
         Args:
             student_id: Student ID
             
         Returns:
-            List of embedding dictionaries
+            Tuple of embedding dictionaries (tuple for hashability)
         """
         try:
             conn = self.get_connection()
@@ -169,14 +180,29 @@ class Database:
             rows = cursor.fetchall()
             conn.close()
             
-            return [dict(row) for row in rows]
+            # Return as tuple for caching (tuples are hashable, lists aren't)
+            return tuple(dict(row) for row in rows)
             
         except Exception as e:
             logger.error(f"Error getting student embeddings: {str(e)}")
-            return []
+            return tuple()
     
-    def get_student_by_id(self, student_id):
-        """Get student information by ID"""
+    def get_student_embeddings(self, student_id):
+        """
+        Get all additional embeddings for a student (wrapper for cached version)
+        
+        Args:
+            student_id: Student ID
+            
+        Returns:
+            List of embedding dictionaries
+        """
+        # Convert cached tuple back to list
+        return list(self.get_student_embeddings_cached(student_id))
+    
+    @lru_cache(maxsize=200)
+    def get_student_by_id_cached(self, student_id):
+        """Get student information by ID (CACHED)"""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
@@ -186,12 +212,22 @@ class Database:
             conn.close()
             
             if row:
-                return dict(row)
+                # Convert to tuple for caching
+                return tuple(row)
             return None
             
         except Exception as e:
             logger.error(f"Error getting student: {str(e)}")
             return None
+    
+    def get_student_by_id(self, student_id):
+        """Get student information by ID (wrapper for cached version)"""
+        cached_result = self.get_student_by_id_cached(student_id)
+        if cached_result:
+            # Convert back to dict
+            keys = ['id', 'name', 'roll_no', 'embedding', 'created_at']
+            return dict(zip(keys, cached_result))
+        return None
     
     def get_student_by_roll_no(self, roll_no):
         """Get student information by roll number"""
@@ -211,8 +247,9 @@ class Database:
             logger.error(f"Error getting student: {str(e)}")
             return None
     
-    def get_all_students(self):
-        """Get all registered students"""
+    @lru_cache(maxsize=1)
+    def get_all_students_cached(self):
+        """Get all registered students (CACHED - cleared when students added)"""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
@@ -221,15 +258,22 @@ class Database:
             rows = cursor.fetchall()
             conn.close()
             
-            return [dict(row) for row in rows]
+            # Return as tuple for caching
+            return tuple(dict(row) for row in rows)
             
         except Exception as e:
             logger.error(f"Error getting all students: {str(e)}")
-            return []
+            return tuple()
+    
+    def get_all_students(self):
+        """Get all registered students (wrapper for cached version)"""
+        # Convert cached tuple back to list
+        return list(self.get_all_students_cached())
     
     def mark_attendance(self, student_id, date, status):
         """
         Mark attendance for a student
+        CRITICAL RULE: Never overwrite 'present' with 'absent'
         
         Args:
             student_id: Student ID
@@ -243,6 +287,21 @@ class Database:
             conn = self.get_connection()
             cursor = conn.cursor()
             
+            # Check if student already marked present today
+            cursor.execute('''
+                SELECT status FROM attendance 
+                WHERE student_id = ? AND date = ?
+            ''', (student_id, date))
+            
+            existing = cursor.fetchone()
+            
+            # CRITICAL: Never overwrite 'present' with 'absent'
+            if existing and existing['status'] == 'present' and status == 'absent':
+                logger.info(f"⚠️ Skipping: Student {student_id} already marked PRESENT on {date}")
+                conn.close()
+                return True  # Return success but don't overwrite
+            
+            # Insert or update attendance
             cursor.execute('''
                 INSERT OR REPLACE INTO attendance (student_id, date, status)
                 VALUES (?, ?, ?)
@@ -251,7 +310,7 @@ class Database:
             conn.commit()
             conn.close()
             
-            logger.info(f"Marked student {student_id} as {status} on {date}")
+            logger.info(f"✅ Marked student {student_id} as {status} on {date}")
             return True
             
         except Exception as e:
@@ -331,7 +390,12 @@ class Database:
             conn.close()
             
             if rows_deleted > 0:
-                logger.info(f"Deleted student ID {student_id}")
+                # IMPORTANT: Clear caches after deletion!
+                self.get_all_students_cached.cache_clear()
+                self.get_student_by_id_cached.cache_clear()
+                self.get_student_embeddings_cached.cache_clear()
+                
+                logger.info(f"✅ Deleted student ID {student_id} and cleared caches")
                 return True
             return False
             
@@ -360,7 +424,13 @@ class Database:
             conn.commit()
             conn.close()
             
+            # IMPORTANT: Clear all caches after deletion!
+            self.get_all_students_cached.cache_clear()
+            self.get_student_by_id_cached.cache_clear()
+            self.get_student_embeddings_cached.cache_clear()
+            
             logger.warning(f"⚠️ CLEARED ALL DATA: {students_deleted} students, {embeddings_deleted} embeddings, {attendance_deleted} attendance records")
+            logger.info("✅ All caches cleared")
             return True
             
         except Exception as e:

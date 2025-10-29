@@ -1,6 +1,7 @@
 """
 Face Detection using RetinaFace
 Detects multiple faces in images with high accuracy
+OPTIMIZED: Smart processing - only enhance poor quality images
 """
 
 import cv2
@@ -11,25 +12,57 @@ try:
 except ImportError:
     from retina_face import RetinaFace
 import logging
+from functools import lru_cache
+import hashlib
 
 logger = logging.getLogger(__name__)
 
 class FaceDetector:
-    """Face detection using RetinaFace"""
+    """Face detection using RetinaFace with smart enhancement"""
     
     def __init__(self):
         """Initialize RetinaFace detector"""
         self.detector = None
         self.ready = True
-        logger.info("FaceDetector initialized with RetinaFace")
+        self.detection_cache = {}  # Cache for faster repeated detections
+        logger.info("FaceDetector initialized with RetinaFace (GPU-optimized)")
     
     def is_ready(self):
         """Check if detector is ready"""
         return self.ready
     
+    def _get_image_hash(self, image_path):
+        """Generate hash for image caching"""
+        with open(image_path, 'rb') as f:
+            return hashlib.md5(f.read()).hexdigest()
+    
+    def _calculate_image_quality(self, img):
+        """
+        Calculate image quality metrics to decide if enhancement is needed
+        Returns: (blur_score, brightness_score, needs_enhancement)
+        """
+        # Convert to grayscale
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        
+        # Calculate blur (Laplacian variance)
+        blur_score = cv2.Laplacian(gray, cv2.CV_64F).var()
+        
+        # Calculate brightness
+        brightness_score = np.mean(gray)
+        
+        # Decide if enhancement needed
+        # Low blur (<100) = blurry image → needs enhancement
+        # Low brightness (<100) or high brightness (>180) → needs enhancement
+        needs_enhancement = (blur_score < 100 or 
+                           brightness_score < 100 or 
+                           brightness_score > 180)
+        
+        return blur_score, brightness_score, needs_enhancement
+    
     def detect_faces(self, image_path):
         """
-        Detect faces in an image
+        Detect faces in an image with SMART enhancement
+        Only applies upscaling/enhancements if image quality is poor
         
         Args:
             image_path: Path to the image file
@@ -38,47 +71,66 @@ class FaceDetector:
             List of detected faces with bounding boxes and landmarks
         """
         try:
+            # Check cache first
+            img_hash = self._get_image_hash(image_path)
+            if img_hash in self.detection_cache:
+                logger.info("✅ Using cached detection result")
+                return self.detection_cache[img_hash]
+            
             # Read image
             img = cv2.imread(image_path)
             if img is None:
                 logger.error(f"Failed to read image: {image_path}")
                 return []
             
-            # For distant photos, upscale the image for better detection
             height, width = img.shape[:2]
             
-            # AGGRESSIVE: Always upscale for group photos to detect small faces
-            # If image is large (>800px), it's likely a group photo - upscale MORE
-            if width > 800 or height > 800:
-                # Increase resolution by 2x for MUCH better small face detection
-                scale_factor = 2.0  # Increased from 1.5x to 2x
-                new_width = int(width * scale_factor)
-                new_height = int(height * scale_factor)
-                img_upscaled = cv2.resize(img, (new_width, new_height), interpolation=cv2.INTER_CUBIC)
+            # SMART PROCESSING: Check image quality first
+            blur_score, brightness, needs_enhancement = self._calculate_image_quality(img)
+            
+            logger.info(f"Image Quality - Blur: {blur_score:.1f}, Brightness: {brightness:.1f}, "
+                       f"Enhancement needed: {needs_enhancement}")
+            
+            detection_path = image_path
+            scale_factor = 1.0
+            
+            # ONLY enhance if image quality is poor OR it's a distant group photo with small faces
+            if needs_enhancement or (width > 1200 or height > 1200):
+                logger.info("⚡ SMART MODE: Enhancing poor quality image")
                 
-                # Apply STRONGER sharpening to enhance face features
-                kernel = np.array([[-1,-1,-1],
-                                   [-1, 10,-1],  # Increased center from 9 to 10
-                                   [-1,-1,-1]])
-                img_upscaled = cv2.filter2D(img_upscaled, -1, kernel)
+                # Upscale only if needed
+                if width > 800 or height > 800:
+                    scale_factor = 2.0
+                    new_width = int(width * scale_factor)
+                    new_height = int(height * scale_factor)
+                    img_enhanced = cv2.resize(img, (new_width, new_height), interpolation=cv2.INTER_CUBIC)
+                    logger.info(f"  Upscaled: {width}x{height} → {new_width}x{new_height}")
+                else:
+                    img_enhanced = img.copy()
                 
-                # Apply contrast enhancement
-                img_upscaled = cv2.convertScaleAbs(img_upscaled, alpha=1.2, beta=10)
+                # Apply sharpening only if blurry
+                if blur_score < 100:
+                    kernel = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]])
+                    img_enhanced = cv2.filter2D(img_enhanced, -1, kernel)
+                    logger.info("  Applied sharpening (image was blurry)")
+                
+                # Apply contrast enhancement only if brightness is off
+                if brightness < 100 or brightness > 180:
+                    img_enhanced = cv2.convertScaleAbs(img_enhanced, alpha=1.2, beta=10)
+                    logger.info("  Applied contrast enhancement (brightness was off)")
                 
                 # Save temporarily
-                temp_path = image_path.replace('.jpg', '_upscaled.jpg')
-                cv2.imwrite(temp_path, img_upscaled)
+                temp_path = image_path.replace('.jpg', '_enhanced.jpg')
+                cv2.imwrite(temp_path, img_enhanced)
                 detection_path = temp_path
-                
-                logger.info(f"AGGRESSIVE UPSCALE: {width}x{height} → {new_width}x{new_height} for large group photo")
             else:
-                detection_path = image_path
+                logger.info("🚀 FAST MODE: Good quality image, skipping enhancements")
             
-            # Detect faces using RetinaFace with stricter threshold
+            # Detect faces using RetinaFace
             faces = RetinaFace.detect_faces(
                 detection_path,
-                threshold=0.4,  # STRICTER: Increased to 0.4 for better quality face detection
-                allow_upscaling=True  # Allow RetinaFace to upscale if needed
+                threshold=0.4,  # Keep stricter threshold for quality
+                allow_upscaling=False  # We handle upscaling manually now
             )
             
             # Clean up temp file if created
@@ -100,15 +152,13 @@ class FaceDetector:
                 bbox = [facial_area[0], facial_area[1], facial_area[2], facial_area[3]]
                 
                 # If we upscaled, scale bbox back to original coordinates
-                if detection_path != image_path:
-                    scale_factor = 2.0  # Updated to match new scale factor
+                if scale_factor != 1.0:
                     bbox = [coord / scale_factor for coord in bbox]
                 
                 # Extract landmarks
                 landmarks = face_data['landmarks']
-                if detection_path != image_path:
+                if scale_factor != 1.0:
                     # Scale landmarks back too
-                    scale_factor = 2.0  # Updated to match new scale factor
                     for landmark_key in landmarks:
                         landmarks[landmark_key] = tuple(coord / scale_factor for coord in landmarks[landmark_key])
                 
@@ -122,6 +172,10 @@ class FaceDetector:
                 })
             
             logger.info(f"✅ DETECTED {len(detected_faces)} FACE(S) in {image_path}")
+            
+            # Cache the result
+            self.detection_cache[img_hash] = detected_faces
+            
             return detected_faces
             
         except Exception as e:

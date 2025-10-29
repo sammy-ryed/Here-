@@ -53,7 +53,7 @@
         <TableView fx:id="studentsTable" VBox.vgrow="ALWAYS">
             <columns>
                 <TableColumn fx:id="idColumn" text="ID" prefWidth="60"/>
-                <TableColumn fx:id="rollNoColumn" text="Roll No" prefWidth="100"/>
+                <TableColumn fx:id="rollNoColumn" text="Roll No" prefWidth="150"/>
                 <TableColumn fx:id="nameColumn" text="Name" prefWidth="180"/>
                 <TableColumn fx:id="presentTodayColumn" text="Present Today" prefWidth="120"/>
                 <TableColumn fx:id="statusColumn" text="Status" prefWidth="100"/>

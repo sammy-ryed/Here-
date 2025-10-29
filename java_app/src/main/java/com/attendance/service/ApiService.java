@@ -32,6 +32,7 @@ public class ApiService {
     private final String baseUrl;
     private final Gson gson;
     private static final int TIMEOUT = 120000; // 120 seconds (2 minutes) - for face embedding processing
+    private static final int REGISTER_TIMEOUT = 300000; // 300 seconds (5 minutes) - for student registration with multiple photos
     private static final int CONNECT_TIMEOUT = 10000; // 10 seconds for initial connection
     
     public ApiService() {
@@ -75,8 +76,8 @@ public class ApiService {
             conn.setRequestMethod("POST");
             conn.setDoOutput(true);
             conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
-            conn.setConnectTimeout(TIMEOUT);
-            conn.setReadTimeout(TIMEOUT);
+            conn.setConnectTimeout(CONNECT_TIMEOUT);
+            conn.setReadTimeout(REGISTER_TIMEOUT); // Use longer timeout for registration (5 minutes for multiple photos)
             
             try (OutputStream os = conn.getOutputStream();
                  OutputStreamWriter writer = new OutputStreamWriter(os, StandardCharsets.UTF_8)) {
