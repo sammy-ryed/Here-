@@ -4,7 +4,6 @@ import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.IOException;
 
-import org.opencv.core.Core;
 import org.opencv.core.Mat;
 import org.opencv.core.MatOfByte;
 import org.opencv.imgcodecs.Imgcodecs;
@@ -28,11 +27,11 @@ public class CameraCapture {
     
     static {
         try {
-            // Load OpenCV native library
-            System.loadLibrary(Core.NATIVE_LIBRARY_NAME);
+            // Load OpenCV native library using openpnp approach
+            nu.pattern.OpenCV.loadLocally();
             opencvLoaded = true;
             Logger.info("OpenCV loaded successfully");
-        } catch (UnsatisfiedLinkError e) {
+        } catch (Exception e) {
             Logger.error("Failed to load OpenCV library: " + e.getMessage(), e);
             opencvLoaded = false;
         }

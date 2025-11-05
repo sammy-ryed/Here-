@@ -176,7 +176,7 @@ class Database:
             conn = self.get_connection()
             cursor = conn.cursor()
             
-            cursor.execute('SELECT * FROM embeddings WHERE student_id = ?', (student_id,))
+            cursor.execute('SELECT id, student_id, embedding_json as embedding FROM embeddings WHERE student_id = ?', (student_id,))
             rows = cursor.fetchall()
             conn.close()
             
@@ -254,7 +254,7 @@ class Database:
             conn = self.get_connection()
             cursor = conn.cursor()
             
-            cursor.execute('SELECT * FROM students ORDER BY name')
+            cursor.execute('SELECT id, name, roll_no, embedding_json as embedding FROM students ORDER BY name')
             rows = cursor.fetchall()
             conn.close()
             

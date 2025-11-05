@@ -83,16 +83,45 @@ def process_single_face_for_attendance(face_idx, face, filepath, all_students, r
             
             # Check primary embedding
             if 'embedding' in student and student['embedding'] is not None:
-                student_embedding = np.frombuffer(student['embedding'], dtype=np.float32)
-                similarity = face_recognizer.compare_embeddings(embedding, student_embedding)
-                max_similarity = max(max_similarity, similarity)
+                logger.info(f"Primary embedding type: {type(student['embedding'])}")
+                
+                if isinstance(student['embedding'], dict):
+                    logger.error(f"Primary embedding is a dict instead of bytes: {student['embedding']}")
+                else:
+                    student_embedding = np.frombuffer(student['embedding'], dtype=np.float32)
+                    similarity = face_recognizer.compare_embeddings(embedding, student_embedding)
+                    max_similarity = max(max_similarity, similarity)
             
             # Check additional embeddings
             additional_embeddings = database.get_student_embeddings(student['id'])
             for emb_data in additional_embeddings:
-                emb = np.frombuffer(emb_data['embedding'], dtype=np.float32)
-                similarity = face_recognizer.compare_embeddings(embedding, emb)
-                max_similarity = max(max_similarity, similarity)
+                logger.debug(f"Additional embedding data type: {type(emb_data)}")
+                logger.debug(f"Additional embedding data: {emb_data}")
+                
+                # Check if emb_data['embedding'] is the right type
+                raw_embedding = emb_data['embedding']
+                logger.debug(f"Raw embedding type: {type(raw_embedding)}")
+                
+                if isinstance(raw_embedding, dict):
+                    logger.error(f"Raw embedding is a dict, attempting to extract numpy array")
+                    # Try to extract the actual embedding from the dict
+                    if 'embedding' in raw_embedding:
+                        try:
+                            emb = np.array(raw_embedding['embedding'], dtype=np.float32)
+                            logger.info(f"Successfully extracted embedding array with shape: {emb.shape}")
+                        except Exception as e:
+                            logger.error(f"Failed to extract embedding from dict: {e}")
+                            continue
+                    else:
+                        logger.error(f"Dict embedding missing 'embedding' key: {list(raw_embedding.keys())}")
+                        continue
+                else:
+                    emb = np.frombuffer(raw_embedding, dtype=np.float32)
+                
+                # Calculate similarity if we have a valid embedding
+                if 'emb' in locals() and emb is not None:
+                    similarity = face_recognizer.compare_embeddings(embedding, emb)
+                    max_similarity = max(max_similarity, similarity)
             
             # Track similarity for logging
             all_similarities.append((student['name'], max_similarity))
@@ -677,6 +706,88 @@ def clear_all_students():
             
     except Exception as e:
         logger.error(f"Error clearing all students: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/recognize/face', methods=['POST'])
+def recognize_face():
+    """
+    Recognize a single face from base64 image data
+    Expected JSON: {"image": "base64_image_string"}
+    Returns: {"name": "Student Name"} or {"name": null} if unknown
+    """
+    try:
+        data = request.get_json()
+        
+        if not data or 'image' not in data:
+            return jsonify({'error': 'No image data provided'}), 400
+            
+        # Decode base64 image
+        base64_image = data['image']
+        image_data = base64.b64decode(base64_image)
+        image = Image.open(BytesIO(image_data))
+        
+        # Convert PIL to numpy array
+        image_np = np.array(image)
+        
+        # Convert RGB to BGR for OpenCV
+        if len(image_np.shape) == 3 and image_np.shape[2] == 3:
+            image_cv = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
+        else:
+            image_cv = image_np
+            
+        logger.info("🔍 Processing single face recognition request")
+        
+        # Detect faces in the image
+        faces = face_detector.detect_faces(image_cv)
+        
+        if not faces:
+            logger.info("No faces detected in the image")
+            return jsonify({'name': None})
+            
+        # Use the first (and presumably only) face
+        face = faces[0]
+        
+        # Extract face embedding
+        embedding = face_recognizer.get_embedding(image_cv, face)
+        
+        if embedding is None:
+            logger.warning("Failed to extract embedding from face")
+            return jsonify({'name': None})
+            
+        # Get all student embeddings from database
+        students = database.get_all_students()
+        
+        if not students:
+            logger.info("No students registered in database")
+            return jsonify({'name': None})
+            
+        best_match = None
+        best_similarity = 0
+        
+        # Compare with each student's embeddings
+        for student in students:
+            embeddings = database.get_student_embeddings(student['id'])
+            
+            for stored_embedding in embeddings:
+                similarity = face_recognizer.compare_embeddings(embedding, stored_embedding)
+                
+                if similarity > best_similarity and similarity >= CONFIDENCE_THRESHOLD:
+                    best_similarity = similarity
+                    best_match = student
+                    
+        if best_match:
+            logger.info(f"✅ Face recognized: {best_match['name']} (similarity: {best_similarity:.3f})")
+            return jsonify({
+                'name': best_match['name'],
+                'student_id': best_match['id'],
+                'similarity': best_similarity
+            })
+        else:
+            logger.info(f"❌ Face not recognized (best similarity: {best_similarity:.3f}, threshold: {CONFIDENCE_THRESHOLD})")
+            return jsonify({'name': None})
+            
+    except Exception as e:
+        logger.error(f"Error in face recognition: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/attendance/mark', methods=['POST'])

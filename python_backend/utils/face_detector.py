@@ -31,11 +31,16 @@ class FaceDetector:
         """Check if detector is ready"""
         return self.ready
     
-    def _get_image_hash(self, image_path):
-        """Generate hash for image caching"""
-        with open(image_path, 'rb') as f:
-            return hashlib.md5(f.read()).hexdigest()
-    
+    def _get_image_hash(self, image_input):
+        """Generate hash for image caching - handles both file paths and numpy arrays"""
+        if isinstance(image_input, str):
+            # File path
+            with open(image_input, 'rb') as f:
+                return hashlib.md5(f.read()).hexdigest()
+        else:
+            # Numpy array
+            return hashlib.md5(image_input.tobytes()).hexdigest()
+
     def _calculate_image_quality(self, img):
         """
         Calculate image quality metrics to decide if enhancement is needed
@@ -59,29 +64,37 @@ class FaceDetector:
         
         return blur_score, brightness_score, needs_enhancement
     
-    def detect_faces(self, image_path):
+    def detect_faces(self, image_input):
         """
         Detect faces in an image with SMART enhancement
         Only applies upscaling/enhancements if image quality is poor
         
         Args:
-            image_path: Path to the image file
+            image_input: Path to the image file (str) or numpy array
             
         Returns:
             List of detected faces with bounding boxes and landmarks
         """
         try:
             # Check cache first
-            img_hash = self._get_image_hash(image_path)
+            img_hash = self._get_image_hash(image_input)
             if img_hash in self.detection_cache:
                 logger.info("✅ Using cached detection result")
                 return self.detection_cache[img_hash]
             
-            # Read image
-            img = cv2.imread(image_path)
-            if img is None:
-                logger.error(f"Failed to read image: {image_path}")
-                return []
+            # Read image - handle both file paths and numpy arrays
+            if isinstance(image_input, str):
+                # File path
+                img = cv2.imread(image_input)
+                if img is None:
+                    logger.error(f"Could not read image from path: {image_input}")
+                    return []
+            else:
+                # Numpy array
+                img = image_input.copy() if image_input is not None else None
+                if img is None:
+                    logger.error("Received None as image input")
+                    return []
             
             height, width = img.shape[:2]
             
@@ -91,7 +104,8 @@ class FaceDetector:
             logger.info(f"Image Quality - Blur: {blur_score:.1f}, Brightness: {brightness:.1f}, "
                        f"Enhancement needed: {needs_enhancement}")
             
-            detection_path = image_path
+            # For numpy arrays, we use the original image directly
+            detection_image = img
             scale_factor = 1.0
             
             # ONLY enhance if image quality is poor OR it's a distant group photo with small faces
@@ -119,26 +133,17 @@ class FaceDetector:
                     img_enhanced = cv2.convertScaleAbs(img_enhanced, alpha=1.2, beta=10)
                     logger.info("  Applied contrast enhancement (brightness was off)")
                 
-                # Save temporarily
-                temp_path = image_path.replace('.jpg', '_enhanced.jpg')
-                cv2.imwrite(temp_path, img_enhanced)
-                detection_path = temp_path
+                # Use enhanced image
+                detection_image = img_enhanced
             else:
                 logger.info("🚀 FAST MODE: Good quality image, skipping enhancements")
             
-            # Detect faces using RetinaFace
+            # Detect faces using RetinaFace - it can accept numpy arrays directly
             faces = RetinaFace.detect_faces(
-                detection_path,
+                detection_image,
                 threshold=0.4,  # Keep stricter threshold for quality
                 allow_upscaling=False  # We handle upscaling manually now
             )
-            
-            # Clean up temp file if created
-            if detection_path != image_path:
-                try:
-                    os.remove(detection_path)
-                except:
-                    pass
             
             if not isinstance(faces, dict):
                 logger.info("No faces detected")
@@ -171,7 +176,9 @@ class FaceDetector:
                     'confidence': confidence
                 })
             
-            logger.info(f"✅ DETECTED {len(detected_faces)} FACE(S) in {image_path}")
+            # Log detection result with appropriate message for input type
+            input_type = "file" if isinstance(image_input, str) else "image array"
+            logger.info(f"✅ DETECTED {len(detected_faces)} FACE(S) in {input_type}")
             
             # Cache the result
             self.detection_cache[img_hash] = detected_faces

@@ -44,6 +44,9 @@ public class MainLayoutController implements Initializable {
     private Tab addEmbeddingsTab;
     
     @FXML
+    private Tab liveAttendanceTab;
+    
+    @FXML
     private Tab reportsTab;
     
     @FXML
@@ -96,6 +99,11 @@ public class MainLayoutController implements Initializable {
             FXMLLoader attendanceLoader = new FXMLLoader();
             attendanceLoader.setLocation(getClass().getResource("/fxml/TakeAttendance.fxml"));
             attendanceTab.setContent(attendanceLoader.load());
+            
+            // Load Live Attendance
+            FXMLLoader liveAttendanceLoader = new FXMLLoader();
+            liveAttendanceLoader.setLocation(getClass().getResource("/fxml/LiveAttendance.fxml"));
+            liveAttendanceTab.setContent(liveAttendanceLoader.load());
             
             // Load Add Embeddings
             FXMLLoader addEmbeddingsLoader = new FXMLLoader();

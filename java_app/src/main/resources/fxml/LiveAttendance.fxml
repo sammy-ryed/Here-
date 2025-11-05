@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+<?import javafx.scene.image.ImageView?>
+<?import javafx.scene.canvas.Canvas?>
+
+<VBox xmlns="http://javafx.com/javafx" 
+      xmlns:fx="http://javafx.com/fxml"
+      fx:controller="com.attendance.controller.LiveAttendanceController"
+      spacing="15" style="-fx-background-color: #f8f9fa;">
+    
+    <padding>
+        <Insets top="20" right="20" bottom="20" left="20"/>
+    </padding>
+    
+    <!-- Header -->
+    <Label text="Live Attendance - Click on Faces to Identify" 
+           style="-fx-font-size: 20px; -fx-font-weight: bold; -fx-text-fill: #2c3e50;"/>
+    
+    <Separator/>
+    
+    <!-- Main Content -->
+    <HBox spacing="20">
+        
+        <!-- Camera Section -->
+        <VBox spacing="10" HBox.hgrow="ALWAYS">
+            <Label text="Camera Feed" style="-fx-font-size: 14px; -fx-font-weight: bold;"/>
+            
+            <!-- Camera Display -->
+            <StackPane style="-fx-background-color: black; -fx-border-color: #ddd; -fx-border-width: 2;">
+                <ImageView fx:id="cameraView" fitWidth="640" fitHeight="480" preserveRatio="true"/>
+                <Canvas fx:id="overlayCanvas" width="640" height="480"/>
+            </StackPane>
+            
+            <!-- Controls -->
+            <HBox spacing="10" alignment="CENTER">
+                <Button fx:id="startButton" text="Start Camera" onAction="#handleStartCamera"
+                        style="-fx-padding: 10 20; -fx-background-color: #27ae60; -fx-text-fill: white; -fx-font-size: 14px;"/>
+                <Button fx:id="stopButton" text="Stop Camera" onAction="#handleStopCamera" disable="true"
+                        style="-fx-padding: 10 20; -fx-background-color: #e74c3c; -fx-text-fill: white; -fx-font-size: 14px;"/>
+                <Region HBox.hgrow="ALWAYS"/>
+                <Button fx:id="markPresentButton" text="Mark All Present" onAction="#handleMarkPresent" disable="true"
+                        style="-fx-padding: 10 20; -fx-background-color: #3498db; -fx-text-fill: white; -fx-font-size: 14px;"/>
+            </HBox>
+            
+            <Label fx:id="statusLabel" text="Ready - Click Start Camera to begin"
+                   style="-fx-font-size: 12px; -fx-text-fill: #7f8c8d;"/>
+        </VBox>
+        
+        <!-- Info Panel -->
+        <VBox spacing="15" style="-fx-min-width: 300; -fx-background-color: white; -fx-padding: 20; -fx-border-color: #ecf0f1; -fx-border-width: 1;">
+            
+            <!-- Stats -->
+            <VBox spacing="8">
+                <Label text="Detection Info" style="-fx-font-size: 14px; -fx-font-weight: bold;"/>
+                <Label fx:id="fpsLabel" text="FPS: 0"/>
+                <Label fx:id="facesLabel" text="Faces Detected: 0"/>
+            </VBox>
+            
+            <Separator/>
+            
+            <!-- Color Guide -->
+            <VBox spacing="8">
+                <Label text="Color Guide:" style="-fx-font-size: 13px; -fx-font-weight: bold;"/>
+                <HBox spacing="8" alignment="CENTER_LEFT">
+                    <Region style="-fx-background-color: lightgreen; -fx-min-width: 20; -fx-min-height: 15; -fx-border-color: green;"/>
+                    <Label text="Click to identify" style="-fx-font-size: 11px;"/>
+                </HBox>
+                <HBox spacing="8" alignment="CENTER_LEFT">
+                    <Region style="-fx-background-color: yellow; -fx-min-width: 20; -fx-min-height: 15; -fx-border-color: orange;"/>
+                    <Label text="Processing..." style="-fx-font-size: 11px;"/>
+                </HBox>
+                <HBox spacing="8" alignment="CENTER_LEFT">
+                    <Region style="-fx-background-color: #27ae60; -fx-min-width: 20; -fx-min-height: 15; -fx-border-color: green;"/>
+                    <Label text="Recognized" style="-fx-font-size: 11px;"/>
+                </HBox>
+                <HBox spacing="8" alignment="CENTER_LEFT">
+                    <Region style="-fx-background-color: #e74c3c; -fx-min-width: 20; -fx-min-height: 15; -fx-border-color: darkred;"/>
+                    <Label text="Unknown" style="-fx-font-size: 11px;"/>
+                </HBox>
+            </VBox>
+            
+            <Separator/>
+            
+            <!-- Recognized Students -->
+            <VBox spacing="8" VBox.vgrow="ALWAYS">
+                <Label text="Recognized Students" style="-fx-font-size: 14px; -fx-font-weight: bold;"/>
+                <ListView fx:id="recognizedList" VBox.vgrow="ALWAYS" style="-fx-min-height: 200;"/>
+                <Label fx:id="countLabel" text="Total: 0" style="-fx-font-weight: bold; -fx-text-fill: #3498db;"/>
+            </VBox>
+            
+        </VBox>
+    </HBox>
+    
+</VBox>

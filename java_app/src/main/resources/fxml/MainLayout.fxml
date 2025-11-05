@@ -29,6 +29,7 @@
             <Tab text="Dashboard" fx:id="dashboardTab"/>
             <Tab text="Register Student" fx:id="registerTab"/>
             <Tab text="Take Attendance" fx:id="attendanceTab"/>
+            <Tab text="Live Attendance" fx:id="liveAttendanceTab"/>
             <Tab text="Update Student" fx:id="addEmbeddingsTab"/>
         </TabPane>
     </center>

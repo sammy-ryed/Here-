@@ -39,18 +39,24 @@ class FaceRecognizer:
         """Check if recognizer is ready"""
         return self.ready
     
-    def _get_face_hash(self, image_path, bbox):
-        """Generate unique hash for face region"""
+    def _get_face_hash(self, image_input, bbox):
+        """Generate unique hash for face region - handles both file paths and numpy arrays"""
         bbox_str = '_'.join(map(str, map(int, bbox)))
-        return hashlib.md5(f"{image_path}_{bbox_str}".encode()).hexdigest()
-    
-    def get_embedding(self, image_path, face_data):
+        if isinstance(image_input, str):
+            # File path
+            return hashlib.md5(f"{image_input}_{bbox_str}".encode()).hexdigest()
+        else:
+            # Numpy array - use array hash
+            array_hash = hashlib.md5(image_input.tobytes()).hexdigest()[:8]  # Truncate for brevity
+            return hashlib.md5(f"{array_hash}_{bbox_str}".encode()).hexdigest()
+
+    def get_embedding(self, image_input, face_data):
         """
         Extract embedding from a face with SMART denoising
         Only applies denoising if face is small/poor quality
         
         Args:
-            image_path: Path to the image
+            image_input: Path to the image (str) or numpy array
             face_data: Dictionary containing face bbox and landmarks
             
         Returns:
@@ -58,16 +64,32 @@ class FaceRecognizer:
         """
         try:
             # Check cache first
-            face_hash = self._get_face_hash(image_path, face_data['bbox'])
+            face_hash = self._get_face_hash(image_input, face_data['bbox'])
             if face_hash in self.embedding_cache:
-                logger.info("✅ Using cached embedding")
-                return self.embedding_cache[face_hash]
+                cached_embedding = self.embedding_cache[face_hash]
+                logger.info(f"✅ Using cached embedding, type: {type(cached_embedding)}")
+                
+                # Ensure cached item is still a numpy array
+                if not isinstance(cached_embedding, np.ndarray):
+                    logger.error(f"Cached embedding is not a numpy array: {type(cached_embedding)}")
+                    # Remove bad cache entry
+                    del self.embedding_cache[face_hash]
+                else:
+                    return cached_embedding
             
-            # Read image
-            img = cv2.imread(image_path)
-            if img is None:
-                logger.error(f"Failed to read image: {image_path}")
-                return None
+            # Read image - handle both file paths and numpy arrays
+            if isinstance(image_input, str):
+                # File path
+                img = cv2.imread(image_input)
+                if img is None:
+                    logger.error(f"Failed to read image: {image_input}")
+                    return None
+            else:
+                # Numpy array
+                img = image_input.copy() if image_input is not None else None
+                if img is None:
+                    logger.error("Received None as image input")
+                    return None
             
             # Extract face region
             bbox = face_data['bbox']
@@ -114,7 +136,12 @@ class FaceRecognizer:
             
             # Save temporary face image (unique name for thread safety)
             import os
-            temp_path = f'temp_face_{threading.get_ident()}_{hash(image_path)}.jpg'
+            # Generate hash for both file paths and arrays
+            if isinstance(image_input, str):
+                input_hash = hash(image_input)
+            else:
+                input_hash = hash(image_input.tobytes()[:1000])  # Use first 1000 bytes for hash
+            temp_path = f'temp_face_{threading.get_ident()}_{input_hash}.jpg'
             cv2.imwrite(temp_path, face_img)
             
             try:
@@ -140,13 +167,28 @@ class FaceRecognizer:
                         logger.warning(f"Failed to cleanup temp file {temp_path}: {cleanup_error}")
             
             # Extract embedding vector
+            logger.debug(f"DeepFace result type: {type(embedding_obj)}")
+            logger.debug(f"DeepFace result: {str(embedding_obj)[:200]}...")
+            
             if isinstance(embedding_obj, list) and len(embedding_obj) > 0:
-                embedding = np.array(embedding_obj[0]['embedding'])
+                embedding_dict = embedding_obj[0]
+                logger.debug(f"Using list item 0, type: {type(embedding_dict)}")
+                embedding = np.array(embedding_dict['embedding'])
             else:
+                logger.debug(f"Using direct object, type: {type(embedding_obj)}")
                 embedding = np.array(embedding_obj['embedding'])
+            
+            logger.debug(f"Extracted embedding shape: {embedding.shape}, type: {type(embedding)}")
             
             # Normalize embedding
             embedding = embedding / np.linalg.norm(embedding)
+            
+            logger.debug(f"Normalized embedding shape: {embedding.shape}, type: {type(embedding)}")
+            
+            # Ensure we have a numpy array before caching/returning
+            if not isinstance(embedding, np.ndarray):
+                logger.error(f"Embedding is not a numpy array before caching: {type(embedding)}")
+                return None
             
             # Cache the embedding before returning
             self.embedding_cache[face_hash] = embedding
@@ -195,13 +237,72 @@ class FaceRecognizer:
         Compare two embeddings using cosine similarity
         
         Args:
-            embedding1: First embedding vector
-            embedding2: Second embedding vector
+            embedding1: First embedding vector (can be numpy array, JSON string, or dict)
+            embedding2: Second embedding vector (can be numpy array, JSON string, or dict)
             
         Returns:
             Similarity score (0 to 1, higher is more similar)
         """
         try:
+            # Convert embeddings to numpy arrays
+            def convert_to_numpy(embedding, name):
+                """Convert any embedding format to numpy array"""
+                if isinstance(embedding, np.ndarray):
+                    return embedding
+                elif isinstance(embedding, dict):
+                    if 'embedding' in embedding:
+                        logger.info(f"Converting {name} from dict to numpy array")
+                        # The embedding value could be a list or JSON string
+                        emb_data = embedding['embedding']
+                        if isinstance(emb_data, str):
+                            import json
+                            emb_data = json.loads(emb_data)
+                        return np.array(emb_data, dtype=np.float32)
+                    else:
+                        logger.error(f"{name} dict does not contain 'embedding' key, keys: {list(embedding.keys())}")
+                        return None
+                elif isinstance(embedding, str):
+                    # Handle JSON string format
+                    try:
+                        logger.info(f"Converting {name} from JSON string to numpy array")
+                        import json
+                        embedding_list = json.loads(embedding)
+                        return np.array(embedding_list, dtype=np.float32)
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Error parsing {name} as JSON: {e}")
+                        return None
+                elif isinstance(embedding, bytes):
+                    try:
+                        logger.info(f"Converting {name} from bytes to numpy array")
+                        return np.frombuffer(embedding, dtype=np.float32)
+                    except Exception as e:
+                        logger.error(f"Error converting {name} from bytes: {e}")
+                        return None
+                elif isinstance(embedding, (list, tuple)):
+                    logger.info(f"Converting {name} from list to numpy array")
+                    return np.array(embedding, dtype=np.float32)
+                else:
+                    logger.error(f"{name} has unsupported type: {type(embedding)}")
+                    return None
+            
+            # Convert both embeddings
+            embedding1 = convert_to_numpy(embedding1, "embedding1")
+            embedding2 = convert_to_numpy(embedding2, "embedding2")
+            
+            # Check if conversion was successful
+            if embedding1 is None or embedding2 is None:
+                logger.error("Failed to convert embeddings to numpy arrays")
+                return 0.0
+            
+            # Ensure both embeddings are numpy arrays
+            if not isinstance(embedding1, np.ndarray):
+                logger.error(f"Embedding1 is not a numpy array after conversion: {type(embedding1)}")
+                return 0.0
+                
+            if not isinstance(embedding2, np.ndarray):
+                logger.error(f"Embedding2 is not a numpy array after conversion: {type(embedding2)}")
+                return 0.0
+            
             # Reshape for sklearn
             emb1 = embedding1.reshape(1, -1)
             emb2 = embedding2.reshape(1, -1)

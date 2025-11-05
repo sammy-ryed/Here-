@@ -741,6 +741,110 @@ public class ApiService {
             throw new Exception("Failed to clear all data: " + errorMsg);
         }
     }
+    
+    /**
+     * Recognize a single face from base64 image data
+     */
+    public String recognizeSingleFace(String base64Image) throws Exception {
+        try {
+            URL url = new URL(baseUrl + "/recognize/face");
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("POST");
+            conn.setRequestProperty("Content-Type", "application/json");
+            conn.setDoOutput(true);
+            conn.setConnectTimeout(CONNECT_TIMEOUT);
+            conn.setReadTimeout(TIMEOUT);
+            
+            // Create JSON payload
+            JsonObject payload = new JsonObject();
+            payload.addProperty("image", base64Image);
+            
+            // Send request
+            try (OutputStream os = conn.getOutputStream();
+                 OutputStreamWriter writer = new OutputStreamWriter(os, StandardCharsets.UTF_8)) {
+                writer.write(payload.toString());
+                writer.flush();
+            }
+            
+            // Read response
+            if (conn.getResponseCode() == HttpURLConnection.HTTP_OK) {
+                String response = readResponse(conn);
+                conn.disconnect();
+                
+                JsonObject result = gson.fromJson(response, JsonObject.class);
+                
+                if (result.has("name") && !result.get("name").isJsonNull()) {
+                    String name = result.get("name").getAsString();
+                    Logger.info("Face recognized: " + name);
+                    return name;
+                } else {
+                    Logger.info("Face not recognized");
+                    return "Unknown";
+                }
+            } else {
+                String errorMsg = readResponse(conn);
+                conn.disconnect();
+                Logger.error("Face recognition failed: " + errorMsg);
+                return "Unknown";
+            }
+            
+        } catch (Exception e) {
+            Logger.error("Error in face recognition: " + e.getMessage());
+            throw new Exception("Face recognition failed: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * Mark attendance for a specific student
+     */
+    public boolean markAttendance(int studentId) throws Exception {
+        try {
+            URL url = new URL(baseUrl + "/attendance/mark");
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("POST");
+            conn.setRequestProperty("Content-Type", "application/json");
+            conn.setDoOutput(true);
+            conn.setConnectTimeout(CONNECT_TIMEOUT);
+            conn.setReadTimeout(TIMEOUT);
+            
+            // Create JSON payload
+            JsonObject payload = new JsonObject();
+            payload.addProperty("student_id", studentId);
+            
+            // Send request
+            try (OutputStream os = conn.getOutputStream();
+                 OutputStreamWriter writer = new OutputStreamWriter(os, StandardCharsets.UTF_8)) {
+                writer.write(payload.toString());
+                writer.flush();
+            }
+            
+            // Read response
+            if (conn.getResponseCode() == HttpURLConnection.HTTP_OK) {
+                String response = readResponse(conn);
+                conn.disconnect();
+                
+                JsonObject result = gson.fromJson(response, JsonObject.class);
+                boolean success = result.get("success").getAsBoolean();
+                
+                if (success) {
+                    Logger.info("Attendance marked for student ID: " + studentId);
+                } else {
+                    Logger.warn("Failed to mark attendance for student ID: " + studentId);
+                }
+                
+                return success;
+            } else {
+                String errorMsg = readResponse(conn);
+                conn.disconnect();
+                Logger.error("Failed to mark attendance: " + errorMsg);
+                return false;
+            }
+            
+        } catch (Exception e) {
+            Logger.error("Error marking attendance: " + e.getMessage());
+            throw new Exception("Failed to mark attendance: " + e.getMessage());
+        }
+    }
 }
 
 
