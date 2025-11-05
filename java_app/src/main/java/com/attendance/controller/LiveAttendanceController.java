@@ -352,17 +352,67 @@ public class LiveAttendanceController implements Initializable {
             faceCascade.detectMultiScale(grayFrame, faceDetections, 1.1, 3, 0, new Size(30, 30), new Size());
             
             Rect[] faces = faceDetections.toArray();
+            
+            // Store previous face states
+            List<FaceBox> previousFaces = new ArrayList<>(detectedFaces);
             detectedFaces.clear();
             
             for (int i = 0; i < faces.length; i++) {
-                FaceBox faceBox = new FaceBox(i, faces[i]);
-                detectedFaces.add(faceBox);
+                Rect newFace = faces[i];
+                
+                // Try to match with previously detected faces
+                FaceBox matchedFace = findMatchingFace(newFace, previousFaces);
+                
+                if (matchedFace != null) {
+                    // Reuse existing face box (preserves state and name)
+                    matchedFace.updateRect(newFace);
+                    detectedFaces.add(matchedFace);
+                } else {
+                    // New face detected
+                    FaceBox faceBox = new FaceBox(i, newFace);
+                    detectedFaces.add(faceBox);
+                }
             }
             
         } catch (Exception e) {
             System.err.println("Face detection error: " + e.getMessage());
             detectedFaces.clear();
         }
+    }
+    
+    private FaceBox findMatchingFace(Rect newFace, List<FaceBox> previousFaces) {
+        // Find a face that overlaps significantly with the new detection
+        double maxOverlap = 0;
+        FaceBox bestMatch = null;
+        
+        for (FaceBox prevFace : previousFaces) {
+            double overlap = calculateOverlap(newFace, prevFace.getRect());
+            if (overlap > 0.5 && overlap > maxOverlap) { // 50% overlap threshold
+                maxOverlap = overlap;
+                bestMatch = prevFace;
+            }
+        }
+        
+        return bestMatch;
+    }
+    
+    private double calculateOverlap(Rect r1, Rect r2) {
+        // Calculate intersection over union (IoU)
+        int x1 = Math.max(r1.x, r2.x);
+        int y1 = Math.max(r1.y, r2.y);
+        int x2 = Math.min(r1.x + r1.width, r2.x + r2.width);
+        int y2 = Math.min(r1.y + r1.height, r2.y + r2.height);
+        
+        if (x2 <= x1 || y2 <= y1) {
+            return 0;
+        }
+        
+        int intersectionArea = (x2 - x1) * (y2 - y1);
+        int r1Area = r1.width * r1.height;
+        int r2Area = r2.width * r2.height;
+        int union = r1Area + r2Area - intersectionArea;
+        
+        return (double) intersectionArea / union;
     }
     
     private void drawFaceOverlays() {
@@ -391,7 +441,9 @@ public class LiveAttendanceController implements Initializable {
                 break;
             case RECOGNIZED:
                 boxColor = Color.GREEN;
-                status = faceBox.getRecognizedName();
+                String name = faceBox.getRecognizedName();
+                status = (name != null && !name.isEmpty()) ? name : "Recognized";
+                Logger.info("🎨 Drawing box with name: '" + status + "'");
                 break;
             case UNKNOWN:
                 boxColor = Color.RED;
@@ -408,13 +460,14 @@ public class LiveAttendanceController implements Initializable {
         gc.strokeRect(faceBox.getX(), faceBox.getY(), faceBox.getWidth(), faceBox.getHeight());
         
         // Draw semi-transparent background for text
-        gc.setFill(Color.rgb(0, 0, 0, 0.7));
-        gc.fillRect(faceBox.getX(), faceBox.getY() - 25, faceBox.getWidth(), 25);
+        gc.setFill(Color.rgb(0, 0, 0, 0.8));
+        double textHeight = 30;
+        gc.fillRect(faceBox.getX(), faceBox.getY() - textHeight, faceBox.getWidth(), textHeight);
         
         // Draw status text
         gc.setFill(textColor);
-        gc.setFont(Font.font(12));
-        gc.fillText(status, faceBox.getX() + 5, faceBox.getY() - 8);
+        gc.setFont(Font.font("Arial", javafx.scene.text.FontWeight.BOLD, 14));
+        gc.fillText(status, faceBox.getX() + 5, faceBox.getY() - 10);
     }
     
     private void handleCanvasClick(MouseEvent event) {
@@ -474,10 +527,14 @@ public class LiveAttendanceController implements Initializable {
     
     private void handleRecognitionResult(FaceBox faceBox, String result) {
         try {
+            Logger.info("🎨 Received recognition result: '" + result + "'");
+            
             if (result != null && !result.trim().isEmpty() && !result.equals("Unknown")) {
                 // Parse result (assuming it contains student info)
                 faceBox.setState(FaceState.RECOGNIZED);
                 faceBox.setRecognizedName(result);
+                
+                Logger.info("📛 Setting name on face box: '" + result + "'");
                 
                 // Add to recognized list if not already present
                 String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"));
@@ -485,17 +542,19 @@ public class LiveAttendanceController implements Initializable {
                 
                 if (!recognizedStudents.contains(listItem)) {
                     recognizedStudents.add(listItem);
-                    // Extract student ID if possible and add to set
-                    // This depends on your backend response format
+                    updateStatus("✅ " + result + " - Attendance Marked!");
+                } else {
+                    updateStatus("Recognized: " + result + " (already marked)");
                 }
                 
                 updateRecognitionCount();
-                updateStatus("Recognized: " + result);
             } else {
+                Logger.info("❌ No valid name received, marking as unknown");
                 faceBox.setState(FaceState.UNKNOWN);
-                updateStatus("Person not recognized");
+                updateStatus("❌ Person not recognized");
             }
         } catch (Exception e) {
+            Logger.error("Error in handleRecognitionResult: " + e.getMessage(), e);
             faceBox.setState(FaceState.UNKNOWN);
             updateStatus("Error processing recognition result");
         }
@@ -600,7 +659,7 @@ public class LiveAttendanceController implements Initializable {
     // Inner Classes
     private static class FaceBox {
         private final int id;
-        private final Rect rect;
+        private Rect rect;
         private FaceState state;
         private String recognizedName;
         
@@ -609,6 +668,10 @@ public class LiveAttendanceController implements Initializable {
             this.rect = rect;
             this.state = FaceState.DETECTED;
             this.recognizedName = "";
+        }
+        
+        public void updateRect(Rect newRect) {
+            this.rect = newRect;
         }
         
         public boolean contains(double x, double y) {

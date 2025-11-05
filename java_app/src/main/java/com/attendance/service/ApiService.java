@@ -771,14 +771,28 @@ public class ApiService {
                 String response = readResponse(conn);
                 conn.disconnect();
                 
+                // DEBUG: Log the raw response
+                Logger.info("🔍 Backend response: " + response);
+                
                 JsonObject result = gson.fromJson(response, JsonObject.class);
                 
                 if (result.has("name") && !result.get("name").isJsonNull()) {
                     String name = result.get("name").getAsString();
-                    Logger.info("Face recognized: " + name);
+                    
+                    // Check if attendance was marked
+                    boolean attendanceMarked = result.has("attendance_marked") && 
+                                              result.get("attendance_marked").getAsBoolean();
+                    
+                    if (attendanceMarked) {
+                        Logger.info("✅ Face recognized: " + name + " - Attendance marked!");
+                    } else {
+                        Logger.info("Face recognized: " + name);
+                    }
+                    
+                    Logger.info("🎯 Returning name to display: '" + name + "'");
                     return name;
                 } else {
-                    Logger.info("Face not recognized");
+                    Logger.info("Face not recognized - 'name' field is null or missing");
                     return "Unknown";
                 }
             } else {

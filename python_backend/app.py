@@ -777,10 +777,20 @@ def recognize_face():
                     
         if best_match:
             logger.info(f"✅ Face recognized: {best_match['name']} (similarity: {best_similarity:.3f})")
+            
+            # AUTOMATICALLY MARK ATTENDANCE AS PRESENT
+            today = datetime.now().strftime('%Y-%m-%d')
+            attendance_marked = database.mark_attendance(best_match['id'], today, 'present')
+            
+            if attendance_marked:
+                logger.info(f"📝 Attendance marked for {best_match['name']} on {today}")
+            
             return jsonify({
                 'name': best_match['name'],
                 'student_id': best_match['id'],
-                'similarity': best_similarity
+                'roll_no': best_match.get('roll_no', ''),
+                'similarity': best_similarity,
+                'attendance_marked': attendance_marked
             })
         else:
             logger.info(f"❌ Face not recognized (best similarity: {best_similarity:.3f}, threshold: {CONFIDENCE_THRESHOLD})")
