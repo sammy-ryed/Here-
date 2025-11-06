@@ -347,9 +347,18 @@ public class LiveAttendanceController implements Initializable {
         try {
             Mat grayFrame = new Mat();
             Imgproc.cvtColor(currentFrame, grayFrame, Imgproc.COLOR_BGR2GRAY);
+            
+            // IMPROVED: Apply Gaussian blur to reduce noise before detection
+            Imgproc.GaussianBlur(grayFrame, grayFrame, new Size(3, 3), 0);
+            
+            // Apply histogram equalization for better contrast
             Imgproc.equalizeHist(grayFrame, grayFrame);
             
-            faceCascade.detectMultiScale(grayFrame, faceDetections, 1.1, 3, 0, new Size(30, 30), new Size());
+            // BALANCED: Reduce false positives while still detecting angled faces
+            // scaleFactor: 1.08 - good balance between speed and accuracy
+            // minNeighbors: 4 - stricter (reduces false positives from background objects)
+            // minSize: 30x30 - minimum face size to detect
+            faceCascade.detectMultiScale(grayFrame, faceDetections, 1.08, 4, 0, new Size(30, 30), new Size());
             
             Rect[] faces = faceDetections.toArray();
             

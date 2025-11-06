@@ -138,10 +138,21 @@ class FaceDetector:
             else:
                 logger.info("🚀 FAST MODE: Good quality image, skipping enhancements")
             
+            # IMPROVED: Apply CLAHE (Contrast Limited Adaptive Histogram Equalization)
+            # This helps detect faces at different angles and lighting conditions
+            lab = cv2.cvtColor(detection_image, cv2.COLOR_BGR2LAB)
+            l, a, b = cv2.split(lab)
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+            l = clahe.apply(l)
+            detection_image = cv2.merge([l, a, b])
+            detection_image = cv2.cvtColor(detection_image, cv2.COLOR_LAB2BGR)
+            logger.info("  Applied CLAHE for better angle detection")
+            
             # Detect faces using RetinaFace - it can accept numpy arrays directly
+            # BALANCED: 0.45 threshold - stricter to reduce false positives while still detecting real faces
             faces = RetinaFace.detect_faces(
                 detection_image,
-                threshold=0.4,  # Keep stricter threshold for quality
+                threshold=0.45,  # Higher = fewer false positives
                 allow_upscaling=False  # We handle upscaling manually now
             )
             

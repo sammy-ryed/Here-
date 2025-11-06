@@ -145,16 +145,15 @@ class FaceRecognizer:
             cv2.imwrite(temp_path, face_img)
             
             try:
-                # Get embedding using DeepFace (with lock - not thread-safe!)
+                # OPTIMIZED: Get embedding using DeepFace (with lock - not thread-safe!)
                 with deepface_lock:
-                    logger.debug(f"Thread {threading.get_ident()} acquiring DeepFace lock...")
                     embedding_obj = DeepFace.represent(
                         img_path=temp_path,
                         model_name=self.model_name,
                         enforce_detection=False,
-                        detector_backend='skip'  # Skip detection as we already have the face
+                        detector_backend='skip',  # Skip detection as we already have the face
+                        align=False  # SPEED: Skip alignment for live recognition
                     )
-                    logger.debug(f"Thread {threading.get_ident()} released DeepFace lock")
             except Exception as deepface_error:
                 logger.error(f"DeepFace error: {str(deepface_error)}")
                 raise
@@ -166,34 +165,20 @@ class FaceRecognizer:
                     except Exception as cleanup_error:
                         logger.warning(f"Failed to cleanup temp file {temp_path}: {cleanup_error}")
             
-            # Extract embedding vector
-            logger.debug(f"DeepFace result type: {type(embedding_obj)}")
-            logger.debug(f"DeepFace result: {str(embedding_obj)[:200]}...")
-            
+            # SPEED: Extract embedding with minimal overhead
             if isinstance(embedding_obj, list) and len(embedding_obj) > 0:
-                embedding_dict = embedding_obj[0]
-                logger.debug(f"Using list item 0, type: {type(embedding_dict)}")
-                embedding = np.array(embedding_dict['embedding'])
+                embedding = np.array(embedding_obj[0]['embedding'], dtype=np.float32)
             else:
-                logger.debug(f"Using direct object, type: {type(embedding_obj)}")
-                embedding = np.array(embedding_obj['embedding'])
+                embedding = np.array(embedding_obj['embedding'], dtype=np.float32)
             
-            logger.debug(f"Extracted embedding shape: {embedding.shape}, type: {type(embedding)}")
+            # SPEED: Normalize embedding using faster method
+            norm = np.linalg.norm(embedding)
+            if norm > 0:
+                embedding = embedding / norm
             
-            # Normalize embedding
-            embedding = embedding / np.linalg.norm(embedding)
-            
-            logger.debug(f"Normalized embedding shape: {embedding.shape}, type: {type(embedding)}")
-            
-            # Ensure we have a numpy array before caching/returning
-            if not isinstance(embedding, np.ndarray):
-                logger.error(f"Embedding is not a numpy array before caching: {type(embedding)}")
-                return None
-            
-            # Cache the embedding before returning
+            # Cache the embedding
             self.embedding_cache[face_hash] = embedding
             
-            logger.info(f"Generated and cached embedding with shape: {embedding.shape}")
             return embedding
             
         except Exception as e:
@@ -234,7 +219,7 @@ class FaceRecognizer:
     
     def compare_embeddings(self, embedding1, embedding2):
         """
-        Compare two embeddings using cosine similarity
+        OPTIMIZED: Compare two embeddings using cosine similarity - FAST VERSION
         
         Args:
             embedding1: First embedding vector (can be numpy array, JSON string, or dict)
@@ -244,71 +229,43 @@ class FaceRecognizer:
             Similarity score (0 to 1, higher is more similar)
         """
         try:
-            # Convert embeddings to numpy arrays
-            def convert_to_numpy(embedding, name):
-                """Convert any embedding format to numpy array"""
+            # SPEED: Fast conversion without excessive logging
+            def convert_to_numpy(embedding):
+                """Convert any embedding format to numpy array - OPTIMIZED"""
                 if isinstance(embedding, np.ndarray):
                     return embedding
                 elif isinstance(embedding, dict):
                     if 'embedding' in embedding:
-                        logger.info(f"Converting {name} from dict to numpy array")
-                        # The embedding value could be a list or JSON string
                         emb_data = embedding['embedding']
                         if isinstance(emb_data, str):
                             import json
                             emb_data = json.loads(emb_data)
                         return np.array(emb_data, dtype=np.float32)
-                    else:
-                        logger.error(f"{name} dict does not contain 'embedding' key, keys: {list(embedding.keys())}")
-                        return None
-                elif isinstance(embedding, str):
-                    # Handle JSON string format
-                    try:
-                        logger.info(f"Converting {name} from JSON string to numpy array")
-                        import json
-                        embedding_list = json.loads(embedding)
-                        return np.array(embedding_list, dtype=np.float32)
-                    except json.JSONDecodeError as e:
-                        logger.error(f"Error parsing {name} as JSON: {e}")
-                        return None
-                elif isinstance(embedding, bytes):
-                    try:
-                        logger.info(f"Converting {name} from bytes to numpy array")
-                        return np.frombuffer(embedding, dtype=np.float32)
-                    except Exception as e:
-                        logger.error(f"Error converting {name} from bytes: {e}")
-                        return None
-                elif isinstance(embedding, (list, tuple)):
-                    logger.info(f"Converting {name} from list to numpy array")
-                    return np.array(embedding, dtype=np.float32)
-                else:
-                    logger.error(f"{name} has unsupported type: {type(embedding)}")
                     return None
+                elif isinstance(embedding, str):
+                    import json
+                    embedding_list = json.loads(embedding)
+                    return np.array(embedding_list, dtype=np.float32)
+                elif isinstance(embedding, bytes):
+                    return np.frombuffer(embedding, dtype=np.float32)
+                elif isinstance(embedding, (list, tuple)):
+                    return np.array(embedding, dtype=np.float32)
+                return None
             
             # Convert both embeddings
-            embedding1 = convert_to_numpy(embedding1, "embedding1")
-            embedding2 = convert_to_numpy(embedding2, "embedding2")
+            emb1 = convert_to_numpy(embedding1)
+            emb2 = convert_to_numpy(embedding2)
             
-            # Check if conversion was successful
-            if embedding1 is None or embedding2 is None:
-                logger.error("Failed to convert embeddings to numpy arrays")
+            if emb1 is None or emb2 is None:
                 return 0.0
             
-            # Ensure both embeddings are numpy arrays
-            if not isinstance(embedding1, np.ndarray):
-                logger.error(f"Embedding1 is not a numpy array after conversion: {type(embedding1)}")
-                return 0.0
-                
-            if not isinstance(embedding2, np.ndarray):
-                logger.error(f"Embedding2 is not a numpy array after conversion: {type(embedding2)}")
-                return 0.0
+            # SPEED: Use direct numpy operations instead of sklearn
+            # Normalize vectors
+            emb1_norm = emb1 / np.linalg.norm(emb1)
+            emb2_norm = emb2 / np.linalg.norm(emb2)
             
-            # Reshape for sklearn
-            emb1 = embedding1.reshape(1, -1)
-            emb2 = embedding2.reshape(1, -1)
-            
-            # Calculate cosine similarity
-            similarity = cosine_similarity(emb1, emb2)[0][0]
+            # Cosine similarity = dot product of normalized vectors
+            similarity = np.dot(emb1_norm, emb2_norm)
             
             return float(similarity)
             

@@ -20,12 +20,33 @@ class Database:
         """Initialize database connection"""
         self.db_path = db_path
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        
+        # Initialize database with WAL mode enabled immediately
+        self._enable_wal_mode()
+        
         self.init_database()
-        logger.info(f"Database initialized at {db_path} with caching enabled")
+        logger.info(f"Database initialized at {db_path} with WAL mode and caching enabled")
+    
+    def _enable_wal_mode(self):
+        """Enable Write-Ahead Logging for better concurrency"""
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            conn.execute('PRAGMA journal_mode=WAL')
+            conn.execute('PRAGMA synchronous=NORMAL')  # Faster writes
+            conn.execute('PRAGMA cache_size=-64000')  # 64MB cache
+            conn.commit()
+            conn.close()
+            logger.info("✅ WAL mode enabled for better concurrent access")
+        except Exception as e:
+            logger.warning(f"Could not enable WAL mode: {e}")
     
     def get_connection(self):
-        """Get database connection"""
-        conn = sqlite3.connect(self.db_path)
+        """Get database connection with timeout and thread safety"""
+        conn = sqlite3.connect(
+            self.db_path,
+            timeout=30.0,  # Wait up to 30 seconds for lock
+            check_same_thread=False  # Allow multi-threading
+        )
         conn.row_factory = sqlite3.Row  # Return rows as dictionaries
         return conn
     
@@ -51,6 +72,7 @@ class Database:
                 name TEXT NOT NULL,
                 roll_no TEXT UNIQUE NOT NULL,
                 embedding BLOB,
+                embedding_json TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
@@ -61,10 +83,24 @@ class Database:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 student_id INTEGER NOT NULL,
                 embedding BLOB NOT NULL,
+                embedding_json TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE
             )
         ''')
+        
+        # Add embedding_json columns if they don't exist (for existing databases)
+        try:
+            cursor.execute("ALTER TABLE students ADD COLUMN embedding_json TEXT")
+            logger.info("Added embedding_json column to students table")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+        
+        try:
+            cursor.execute("ALTER TABLE embeddings ADD COLUMN embedding_json TEXT")
+            logger.info("Added embedding_json column to embeddings table")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
         
         # Attendance table
         cursor.execute('''
@@ -87,7 +123,7 @@ class Database:
         
         conn.commit()
         conn.close()
-        logger.info("Database tables created/verified")
+        logger.info("Database tables created/verified with embedding_json columns")
     
     def add_student(self, name, roll_no, embedding):
         """
@@ -101,34 +137,57 @@ class Database:
         Returns:
             Student ID
         """
-        try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            # Convert embedding to binary
-            embedding_blob = embedding.astype(np.float32).tobytes()
-            
-            cursor.execute(
-                'INSERT INTO students (name, roll_no, embedding) VALUES (?, ?, ?)',
-                (name, roll_no, embedding_blob)
-            )
-            
-            student_id = cursor.lastrowid
-            conn.commit()
-            conn.close()
-            
-            # Clear cache when new student is added
-            self.get_all_students_cached.cache_clear()
-            
-            logger.info(f"Added student: {name} (ID: {student_id})")
-            return student_id
-            
-        except sqlite3.IntegrityError:
-            logger.error(f"Student with roll number {roll_no} already exists")
-            raise ValueError(f"Student with roll number {roll_no} already exists")
-        except Exception as e:
-            logger.error(f"Error adding student: {str(e)}")
-            raise
+        max_retries = 3
+        retry_delay = 0.5  # seconds
+        
+        for attempt in range(max_retries):
+            try:
+                conn = self.get_connection()
+                cursor = conn.cursor()
+                
+                # Convert embedding to JSON string (not bytes!)
+                import json
+                embedding_json = json.dumps(embedding.tolist())
+                
+                # Also store as BLOB for backward compatibility with schema
+                embedding_blob = embedding.astype(np.float32).tobytes()
+                
+                cursor.execute(
+                    'INSERT INTO students (name, roll_no, embedding, embedding_json) VALUES (?, ?, ?, ?)',
+                    (name, roll_no, embedding_blob, embedding_json)
+                )
+                
+                student_id = cursor.lastrowid
+                conn.commit()
+                conn.close()
+                
+                # Clear cache when new student is added
+                self.get_all_students_cached.cache_clear()
+                
+                logger.info(f"✅ Added student: {name} (ID: {student_id}) with JSON embedding")
+                return student_id
+                
+            except sqlite3.IntegrityError:
+                if conn:
+                    conn.close()
+                logger.error(f"Student with roll number {roll_no} already exists")
+                raise ValueError(f"Student with roll number {roll_no} already exists")
+            except sqlite3.OperationalError as e:
+                if conn:
+                    conn.close()
+                if "locked" in str(e).lower() and attempt < max_retries - 1:
+                    logger.warning(f"Database locked, retrying ({attempt + 1}/{max_retries})...")
+                    import time
+                    time.sleep(retry_delay)
+                    continue
+                else:
+                    logger.error(f"Error adding student after {attempt + 1} attempts: {str(e)}")
+                    raise
+            except Exception as e:
+                if conn:
+                    conn.close()
+                logger.error(f"Error adding student: {str(e)}")
+                raise
     
     def add_embedding(self, student_id, embedding):
         """
@@ -138,28 +197,51 @@ class Database:
             student_id: Student ID
             embedding: Face embedding as numpy array
         """
-        try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            embedding_blob = embedding.astype(np.float32).tobytes()
-            
-            cursor.execute(
-                'INSERT INTO embeddings (student_id, embedding) VALUES (?, ?)',
-                (student_id, embedding_blob)
-            )
-            
-            conn.commit()
-            conn.close()
-            
-            # IMPORTANT: Clear cache for this student so new embedding is used!
-            # This ensures attendance matching uses the updated embeddings
-            self.get_student_embeddings_cached.cache_clear()
-            logger.info(f"✅ Cache cleared after adding embedding for student {student_id}")
-            
-        except Exception as e:
-            logger.error(f"Error adding embedding: {str(e)}")
-            raise
+        max_retries = 3
+        retry_delay = 0.5
+        
+        for attempt in range(max_retries):
+            try:
+                conn = self.get_connection()
+                cursor = conn.cursor()
+                
+                # Convert embedding to JSON string (not bytes!)
+                import json
+                embedding_json = json.dumps(embedding.tolist())
+                
+                # Also store as BLOB for backward compatibility with schema
+                embedding_blob = embedding.astype(np.float32).tobytes()
+                
+                cursor.execute(
+                    'INSERT INTO embeddings (student_id, embedding, embedding_json) VALUES (?, ?, ?)',
+                    (student_id, embedding_blob, embedding_json)
+                )
+                
+                conn.commit()
+                conn.close()
+                
+                # IMPORTANT: Clear cache for this student so new embedding is used!
+                # This ensures attendance matching uses the updated embeddings
+                self.get_student_embeddings_cached.cache_clear()
+                logger.info(f"✅ Added JSON embedding for student {student_id}, cache cleared")
+                return
+                
+            except sqlite3.OperationalError as e:
+                if conn:
+                    conn.close()
+                if "locked" in str(e).lower() and attempt < max_retries - 1:
+                    logger.warning(f"Database locked, retrying ({attempt + 1}/{max_retries})...")
+                    import time
+                    time.sleep(retry_delay)
+                    continue
+                else:
+                    logger.error(f"Error adding embedding after {attempt + 1} attempts: {str(e)}")
+                    raise
+            except Exception as e:
+                if conn:
+                    conn.close()
+                logger.error(f"Error adding embedding: {str(e)}")
+                raise
     
     @lru_cache(maxsize=500)
     def get_student_embeddings_cached(self, student_id):
