@@ -1,0 +1,36 @@
+Face Recognition Attendance System - Tech Stack & Overview
+========================================================
+
+Tech Stack:
+-----------
+- **Frontend:** Java (JavaFX), OpenCV (Haar Cascade)
+- **Backend:** Python (Flask), DeepFace (Facenet512, RetinaFace)
+- **Database:** SQLite (WAL mode)
+- **Other:** Numpy, threading, batch processing, REST API
+
+Project Overview:
+-----------------
+This system automates attendance using face recognition. The JavaFX frontend captures photos or live webcam frames, detects faces, and sends them to the Python Flask backend. The backend uses DeepFace (Facenet512 for embeddings, RetinaFace for detection) to recognize faces and mark attendance in the SQLite database. All embeddings are preloaded for fast comparison, and the system is optimized for speed with batch processing, threading, and direct numpy operations. Attendance is marked automatically when a face is recognized, and results are shown in real time.
+
+Possible Critical Questions & Answers:
+--------------------------------------
+Q1: How do you ensure fast and accurate face recognition?
+A1: We use DeepFace with Facenet512 for high-accuracy embeddings, batch process faces, preload all embeddings in RAM, and use direct numpy for fast cosine similarity. Threading and WAL-mode SQLite further speed up processing.
+
+Q2: How do you handle multiple faces in one frame or photo?
+A2: The backend detects all faces in a photo/frame, extracts embeddings for each, and matches them in parallel. Attendance is marked for every recognized face.
+
+Q3: What if two students look very similar?
+A3: We use a high-dimensional (512D) embedding and a strict similarity threshold to minimize false positives. Only high-confidence matches are accepted.
+
+Q4: How do you prevent duplicate attendance?
+A4: The backend checks if a student is already marked present for the day before updating the database, ensuring no duplicate entries.
+
+Q5: What happens if the database is locked or busy?
+A5: The system uses SQLite WAL mode and retry logic to handle concurrent access and avoid lock errors, ensuring reliability even under heavy load.
+
+Q6: Can this system work offline?
+A6: Yes, all processing is local. No internet is required after setup.
+
+Q7: How secure is the data?
+A7: All face data and attendance records are stored locally in SQLite. No data is sent to third parties. Only embeddings (not raw images) are stored for privacy.

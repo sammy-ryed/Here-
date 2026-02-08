@@ -83,6 +83,7 @@ public class RegisterStudentController implements Initializable {
         progressBar.setVisible(false);
         
         updateUI();
+        
         Logger.info("Register student controller initialized");
     }
     
@@ -104,6 +105,7 @@ public class RegisterStudentController implements Initializable {
                     selectedPhotos.add(file);
                 }
             }
+            
             updateStatusLabel("Added " + files.size() + " photo(s)");
             updateUI();
         }

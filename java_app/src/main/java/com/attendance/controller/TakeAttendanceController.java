@@ -95,6 +95,7 @@ public class TakeAttendanceController implements Initializable {
     
     private File selectedPhoto;
     private java.util.List<File> selectedPhotos;
+    private int currentPhotoIndex = 0;  // Track current photo being viewed
     private ApiService apiService;
     private CameraCapture cameraCapture;
     private ObservableList<Student> presentStudents;
@@ -117,8 +118,86 @@ public class TakeAttendanceController implements Initializable {
         presentStudents = FXCollections.observableArrayList();
         absentStudents = FXCollections.observableArrayList();
         
+        // Setup keyboard navigation for photo browsing
+        setupPhotoNavigation();
+        
         updateStatusLabel("Ready to take attendance");
         Logger.info("Take attendance controller initialized");
+    }
+    
+    private void setupPhotoNavigation() {
+        // Add keyboard listener to imagePreview for arrow key navigation
+        if (imagePreview != null) {
+            imagePreview.setOnKeyPressed(event -> {
+                if (selectedPhotos != null && selectedPhotos.size() > 1) {
+                    switch (event.getCode()) {
+                        case LEFT:
+                        case UP:
+                            showPreviousPhoto();
+                            event.consume();
+                            break;
+                        case RIGHT:
+                        case DOWN:
+                            showNextPhoto();
+                            event.consume();
+                            break;
+                        default:
+                            break;
+                    }
+                }
+            });
+            
+            // Make imagePreview focusable so it can receive key events
+            imagePreview.setFocusTraversable(true);
+        }
+    }
+    
+    private void showPreviousPhoto() {
+        if (selectedPhotos == null || selectedPhotos.isEmpty()) {
+            return;
+        }
+        
+        currentPhotoIndex--;
+        if (currentPhotoIndex < 0) {
+            currentPhotoIndex = selectedPhotos.size() - 1; // Wrap to last photo
+        }
+        
+        displayCurrentPhoto();
+    }
+    
+    private void showNextPhoto() {
+        if (selectedPhotos == null || selectedPhotos.isEmpty()) {
+            return;
+        }
+        
+        currentPhotoIndex++;
+        if (currentPhotoIndex >= selectedPhotos.size()) {
+            currentPhotoIndex = 0; // Wrap to first photo
+        }
+        
+        displayCurrentPhoto();
+    }
+    
+    private void displayCurrentPhoto() {
+        if (selectedPhotos == null || selectedPhotos.isEmpty()) {
+            return;
+        }
+        
+        try {
+            File currentFile = selectedPhotos.get(currentPhotoIndex);
+            Image image = new Image(currentFile.toURI().toString());
+            imagePreview.setImage(image);
+            
+            // Update status to show which photo is being viewed
+            String photoInfo = String.format("Photo %d of %d - Use arrow keys to navigate", 
+                                           currentPhotoIndex + 1, 
+                                           selectedPhotos.size());
+            updateStatusLabel(photoInfo);
+            
+            Logger.info("Displaying photo " + (currentPhotoIndex + 1) + " of " + selectedPhotos.size());
+        } catch (Exception e) {
+            Logger.error("Error displaying photo: " + e.getMessage(), e);
+        }
     }
     
     private void setupTables() {
@@ -186,15 +265,23 @@ public class TakeAttendanceController implements Initializable {
         try {
             selectedPhotos = files;
             selectedPhoto = files.get(0); // Keep for backward compatibility
+            currentPhotoIndex = 0; // Reset to first photo
             
             // Show the first image in preview
             Image image = new Image(files.get(0).toURI().toString());
             imagePreview.setImage(image);
             processButton.setDisable(false);
             
-            String message = files.size() == 1 
-                ? "1 photo loaded. Click 'Process Attendance' to continue."
-                : files.size() + " photos loaded. Click 'Process Attendance' to continue.";
+            // Request focus so arrow keys work immediately
+            imagePreview.requestFocus();
+            
+            String message;
+            if (files.size() == 1) {
+                message = "1 photo loaded. Click 'Process Attendance' to continue.";
+            } else {
+                message = String.format("%d photos loaded. Photo 1 of %d - Use arrow keys to navigate. Click 'Process Attendance' when ready.", 
+                                      files.size(), files.size());
+            }
             updateStatusLabel(message);
             
             Logger.info("Loaded " + files.size() + " photo(s) for attendance processing");
