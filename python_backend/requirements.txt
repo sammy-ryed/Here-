@@ -25,3 +25,7 @@ scikit-learn==1.5.2
 # Utilities
 python-dotenv==1.0.0
 requests==2.31.0
+
+# Excel parsing & Google Drive downloading
+openpyxl>=3.1.2
+gdown>=4.7.3

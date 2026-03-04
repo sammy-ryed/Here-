@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { Student, DashboardStats, AttendanceResult } from './types';
+import { Student, DashboardStats, AttendanceResult, BulkImportResult, ExtractFacesResult, AssignFaceResult } from './types';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
@@ -119,5 +119,52 @@ export const apiClient = {
       student_id: studentId,
       status: status,
     });
+  },
+
+  // Bulk import students from Excel + Google Drive links
+  bulkImportStudents: async (excelFile: File): Promise<BulkImportResult> => {
+    const formData = new FormData();
+    formData.append('file', excelFile);
+    const response = await api.post<BulkImportResult>('/students/bulk-import', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 1800000,
+    });
+    return response.data;
+  },
+
+  // Extract all faces from a group/classroom photo
+  extractFaces: async (image: File): Promise<ExtractFacesResult> => {
+    const formData = new FormData();
+    formData.append('image', image);
+    const response = await api.post<ExtractFacesResult>('/extract_faces', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 120000,
+    });
+    return response.data;
+  },
+
+  // Assign an extracted face crop to an existing student
+  assignFace: async (studentId: number, faceFilename: string): Promise<AssignFaceResult> => {
+    const response = await api.post<AssignFaceResult>(`/assign_face/${studentId}`, {
+      face_filename: faceFilename,
+    });
+    return response.data;
+  },
+
+  // Self-registration: get student info from token
+  getSelfRegisterInfo: async (token: string) => {
+    const response = await api.get<import('./types').SelfRegisterInfo>(`/self-register/${token}`);
+    return response.data;
+  },
+
+  // Self-registration: submit photos
+  submitSelfRegistration: async (token: string, images: File[]) => {
+    const formData = new FormData();
+    images.forEach((img) => formData.append('images', img));
+    const response = await api.post(`/self-register/${token}`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 300000,
+    });
+    return response.data;
   },
 };

@@ -73,7 +73,11 @@ class Database:
                 roll_no TEXT UNIQUE NOT NULL,
                 embedding BLOB,
                 embedding_json TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                section TEXT DEFAULT NULL,
+                course TEXT DEFAULT NULL,
+                dept TEXT DEFAULT NULL,
+                room_no TEXT DEFAULT NULL
             )
         ''')
         
@@ -101,7 +105,20 @@ class Database:
             logger.info("Added embedding_json column to embeddings table")
         except sqlite3.OperationalError:
             pass  # Column already exists
-        
+
+        # Add optional student profile columns for existing databases
+        for col_def in [
+            ('section', 'TEXT DEFAULT NULL'),
+            ('course',  'TEXT DEFAULT NULL'),
+            ('dept',    'TEXT DEFAULT NULL'),
+            ('room_no', 'TEXT DEFAULT NULL'),
+        ]:
+            try:
+                cursor.execute(f"ALTER TABLE students ADD COLUMN {col_def[0]} {col_def[1]}")
+                logger.info(f"Added {col_def[0]} column to students table")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+
         # Attendance table
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS attendance (
@@ -128,20 +145,125 @@ class Database:
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_student_id ON embeddings(student_id)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_attendance_date ON attendance(date)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_attendance_student ON attendance(student_id)')
+
+        # Self-registration tokens table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS registration_tokens (
+                token TEXT PRIMARY KEY,
+                student_id INTEGER NOT NULL,
+                expires_at TIMESTAMP NOT NULL,
+                used_at TIMESTAMP DEFAULT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE
+            )
+        ''')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_token_student ON registration_tokens(student_id)')
         
         conn.commit()
         conn.close()
         logger.info("Database tables created/verified with embedding_json columns")
     
-    def add_student(self, name, roll_no, embedding):
+    def add_pending_student(self, name, roll_no, section=None, course=None, dept=None, room_no=None):
+        """
+        Add a student record WITHOUT embedding (pending self-registration).
+        Returns student_id.
+        """
+        conn = self.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                'INSERT INTO students (name, roll_no, section, course, dept, room_no) VALUES (?, ?, ?, ?, ?, ?)',
+                (name, roll_no, section, course, dept, room_no)
+            )
+            student_id = cursor.lastrowid
+            conn.commit()
+            self.get_all_students_cached.cache_clear()
+            logger.info(f"Added pending student: {name} (ID: {student_id})")
+            return student_id
+        except sqlite3.IntegrityError:
+            raise ValueError(f"Student with roll number {roll_no} already exists")
+        finally:
+            conn.close()
+
+    def create_registration_token(self, student_id, expires_days=7):
+        """Generate a secure one-time token for student self-registration."""
+        import secrets
+        from datetime import timedelta
+        token = secrets.token_urlsafe(32)
+        expires_at = (datetime.now() + timedelta(days=expires_days)).isoformat()
+        conn = self.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                'INSERT INTO registration_tokens (token, student_id, expires_at) VALUES (?, ?, ?)',
+                (token, student_id, expires_at)
+            )
+            conn.commit()
+            return token
+        finally:
+            conn.close()
+
+    def get_token_info(self, token):
+        """Return token + student info if token exists; None otherwise."""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT t.token, t.student_id, t.expires_at, t.used_at,
+                       s.name, s.roll_no, s.section, s.course, s.dept, s.room_no,
+                       CASE WHEN s.embedding_json IS NOT NULL THEN 1 ELSE 0 END as has_embedding
+                FROM registration_tokens t
+                JOIN students s ON s.id = t.student_id
+                WHERE t.token = ?
+            ''', (token,))
+            row = cursor.fetchone()
+            conn.close()
+            return dict(row) if row else None
+        except Exception as e:
+            logger.error(f"get_token_info error: {e}")
+            return None
+
+    def mark_token_used(self, token):
+        """Mark a token as consumed."""
+        conn = self.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE registration_tokens SET used_at = ? WHERE token = ?",
+                (datetime.now().isoformat(), token)
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def update_student_embedding(self, student_id, avg_embedding):
+        """Write/overwrite the main embedding for an existing student record."""
+        import json
+        embedding_json = json.dumps(avg_embedding.tolist())
+        embedding_blob = avg_embedding.astype(np.float32).tobytes()
+        conn = self.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                'UPDATE students SET embedding = ?, embedding_json = ? WHERE id = ?',
+                (embedding_blob, embedding_json, student_id)
+            )
+            conn.commit()
+            self.get_all_students_cached.cache_clear()
+            logger.info(f"Updated embedding for student ID {student_id}")
+        finally:
+            conn.close()
+
+    def add_student(self, name, roll_no, embedding, section=None, course=None, dept=None, room_no=None):
         """
         Add a new student to the database
-        
+
         Args:
             name: Student name
             roll_no: Student roll number
             embedding: Face embedding as numpy array
-            
+            section, course, dept, room_no: Optional profile fields
+
         Returns:
             Student ID
         """
@@ -161,8 +283,8 @@ class Database:
                 embedding_blob = embedding.astype(np.float32).tobytes()
                 
                 cursor.execute(
-                    'INSERT INTO students (name, roll_no, embedding, embedding_json) VALUES (?, ?, ?, ?)',
-                    (name, roll_no, embedding_blob, embedding_json)
+                    'INSERT INTO students (name, roll_no, embedding, embedding_json, section, course, dept, room_no) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                    (name, roll_no, embedding_blob, embedding_json, section, course, dept, room_no)
                 )
                 
                 student_id = cursor.lastrowid
@@ -314,10 +436,26 @@ class Database:
         """Get student information by ID (wrapper for cached version)"""
         cached_result = self.get_student_by_id_cached(student_id)
         if cached_result:
-            # Convert back to dict
-            keys = ['id', 'name', 'roll_no', 'embedding', 'created_at']
+            keys = ['id', 'name', 'roll_no', 'embedding', 'embedding_json', 'created_at', 'section', 'course', 'dept', 'room_no']
             return dict(zip(keys, cached_result))
         return None
+
+    def get_all_students_full(self):
+        """Get all students with full profile fields (for API display)"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                '''SELECT id, name, roll_no, section, course, dept, room_no, created_at,
+                          CASE WHEN embedding_json IS NOT NULL THEN 1 ELSE 0 END as has_embedding
+                   FROM students ORDER BY name'''
+            )
+            rows = cursor.fetchall()
+            conn.close()
+            return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error(f"Error getting all students full: {str(e)}")
+            return []
     
     def get_student_by_roll_no(self, roll_no):
         """Get student information by roll number"""

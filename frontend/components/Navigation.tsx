@@ -2,17 +2,21 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, UserPlus, Camera, Video, FileImage } from 'lucide-react';
+import { LayoutDashboard, UserPlus, Camera, Video, FileImage, FileSpreadsheet } from 'lucide-react';
 
 export default function Navigation() {
   const pathname = usePathname();
 
+  // Self-register pages are student-facing — hide the nav bar
+  if (pathname.startsWith('/self-register')) return null;
+
   const navItems = [
-    { href: '/', label: 'Dashboard', icon: LayoutDashboard },
-    { href: '/register', label: 'Register', icon: UserPlus },
-    { href: '/attendance', label: 'Attendance', icon: Camera },
-    { href: '/live', label: 'Live', icon: Video },
-    { href: '/embeddings', label: 'Embeddings', icon: FileImage },
+    { href: '/',             label: 'Dashboard',   icon: LayoutDashboard },
+    { href: '/register',     label: 'Register',    icon: UserPlus },
+    { href: '/bulk-import',  label: 'Bulk Import', icon: FileSpreadsheet },
+    { href: '/attendance',   label: 'Attendance',  icon: Camera },
+    { href: '/live',         label: 'Live',        icon: Video },
+    { href: '/embeddings',   label: 'Embeddings',  icon: FileImage },
   ];
 
   return (

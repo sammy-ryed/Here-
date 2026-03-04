@@ -515,11 +515,11 @@ def get_unrecognized_face(filename):
 
 @app.route('/students', methods=['GET'])
 def get_all_students():
-    """Get all registered students"""
+    """Get all registered students with full profile fields"""
     try:
-        students = database.get_all_students()
+        students = database.get_all_students_full()
         return jsonify({
-            'students': [{'id': s['id'], 'name': s['name'], 'roll_no': s['roll_no']} for s in students],
+            'students': students,
             'total': len(students)
         })
     except Exception as e:
@@ -600,6 +600,326 @@ def get_dashboard_stats():
     except Exception as e:
         logger.error(f"Error getting dashboard stats: {str(e)}")
         return jsonify({'error': str(e)}), 500
+
+@app.route('/students/bulk-import', methods=['POST'])
+def bulk_import_students():
+    """
+    Bulk-import students from an Excel file.
+    AUTO-DETECTS MODE:
+      - If no 'Drive Link' column → SELF-REGISTRATION MODE:
+          Creates pending student records + secure one-time tokens.
+          Faculty distributes the links to students privately.
+      - If 'Drive Link' column present → DRIVE MODE (legacy):
+          Downloads Drive folders and registers immediately.
+    Required columns: Name, Roll No  (+ optional: Section, Course, Department, Room No)
+    """
+    import tempfile
+    try:
+        import openpyxl
+    except ImportError:
+        return jsonify({'error': 'openpyxl is not installed. Run: pip install openpyxl'}), 500
+
+    if 'file' not in request.files:
+        return jsonify({'error': 'No Excel file provided'}), 400
+
+    excel_file = request.files['file']
+    if not excel_file.filename.lower().endswith(('.xlsx', '.xls')):
+        return jsonify({'error': 'Only .xlsx or .xls files are accepted'}), 400
+
+    tmp_excel = tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False)
+    excel_file.save(tmp_excel.name)
+    tmp_excel.close()
+
+    try:
+        wb = openpyxl.load_workbook(tmp_excel.name)
+        ws = wb.active
+
+        raw_headers = [str(cell.value).strip().lower() if cell.value is not None else '' for cell in ws[1]]
+        col_map = {}
+        ALIASES = {
+            'name':       ('name', 'student name', 'full name', 'student_name'),
+            'roll_no':    ('roll no', 'roll_no', 'roll number', 'rollno', 'roll'),
+            'section':    ('section',),
+            'course':     ('course', 'programme', 'program'),
+            'dept':       ('department', 'dept'),
+            'room_no':    ('room no', 'room_no', 'room', 'room number'),
+            'drive_link': ('drive link', 'drive_link', 'photos link', 'link', 'photo link', 'photos', 'folder link'),
+        }
+        for key, aliases in ALIASES.items():
+            for i, h in enumerate(raw_headers):
+                if h in aliases:
+                    col_map[key] = i
+                    break
+
+        missing_required = [k for k in ('name', 'roll_no') if k not in col_map]
+        if missing_required:
+            return jsonify({'error': f"Excel is missing required column(s): {', '.join(missing_required)}. "
+                                     f"Required: Name, Roll No"}), 400
+
+        token_mode = 'drive_link' not in col_map
+        logger.info(f"[bulk-import] Mode: {'SELF-REGISTRATION TOKENS' if token_mode else 'DRIVE LINKS'}")
+
+        # ── TOKEN MODE ──────────────────────────────────────────────────────────
+        if token_mode:
+            tokens = []
+            for row_idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+                if not any(row):
+                    continue
+
+                def cell(key):
+                    idx = col_map.get(key)
+                    return str(row[idx]).strip() if idx is not None and row[idx] is not None else ''
+
+                name    = cell('name')
+                roll_no = cell('roll_no')
+                section = cell('section') or None
+                course  = cell('course') or None
+                dept    = cell('dept') or None
+                room_no = cell('room_no') or None
+
+                if not name or not roll_no:
+                    tokens.append({'roll_no': roll_no or f'row_{row_idx}', 'name': name,
+                                   'status': 'skipped', 'message': 'Missing name or roll_no'})
+                    continue
+
+                existing = database.get_student_by_roll_no(roll_no)
+                if existing:
+                    tokens.append({'roll_no': roll_no, 'name': name,
+                                   'status': 'skipped', 'message': 'Already in system'})
+                    continue
+
+                try:
+                    student_id = database.add_pending_student(
+                        name, roll_no, section=section, course=course, dept=dept, room_no=room_no
+                    )
+                    token = database.create_registration_token(student_id, expires_days=7)
+                    tokens.append({
+                        'roll_no': roll_no, 'name': name,
+                        'status': 'pending', 'token': token,
+                        'message': 'Awaiting student self-registration'
+                    })
+                    logger.info(f"[bulk-import] Created token for {name} ({roll_no})")
+                except ValueError as e:
+                    tokens.append({'roll_no': roll_no, 'name': name, 'status': 'failed', 'message': str(e)})
+
+            pending_count = sum(1 for t in tokens if t['status'] == 'pending')
+            skipped_count = sum(1 for t in tokens if t['status'] == 'skipped')
+            failed_count  = sum(1 for t in tokens if t['status'] == 'failed')
+
+            return jsonify({
+                'success': True,
+                'mode': 'tokens',
+                'total':   len(tokens),
+                'pending': pending_count,
+                'skipped': skipped_count,
+                'failed':  failed_count,
+                'tokens':  tokens
+            })
+
+        # ── DRIVE MODE (legacy) ───────────────────────────────────────────────
+        try:
+            import gdown
+        except ImportError:
+            return jsonify({'error': 'gdown is not installed. Run: pip install gdown'}), 500
+
+        results = []
+        for row_idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+            if not any(row):
+                continue
+
+            def cell(key):
+                idx = col_map.get(key)
+                return str(row[idx]).strip() if idx is not None and row[idx] is not None else ''
+
+            name       = cell('name')
+            roll_no    = cell('roll_no')
+            drive_link = cell('drive_link')
+            section    = cell('section') or None
+            course     = cell('course') or None
+            dept       = cell('dept') or None
+            room_no    = cell('room_no') or None
+
+            if not name or not roll_no or not drive_link:
+                results.append({'roll_no': roll_no or f'row_{row_idx}', 'name': name,
+                                 'status': 'skipped', 'message': 'Missing name, roll_no, or drive_link'})
+                continue
+
+            if database.get_student_by_roll_no(roll_no):
+                results.append({'roll_no': roll_no, 'name': name,
+                                 'status': 'skipped', 'message': 'Already registered'})
+                continue
+
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                try:
+                    downloaded = gdown.download_folder(drive_link, output=tmp_dir, quiet=True, use_cookies=False)
+                    if downloaded is None or len(downloaded) == 0:
+                        results.append({'roll_no': roll_no, 'name': name, 'status': 'failed',
+                                         'message': 'Could not download Drive folder — set sharing to "Anyone with the link"'})
+                        continue
+                except Exception as e:
+                    results.append({'roll_no': roll_no, 'name': name, 'status': 'failed',
+                                     'message': f'Drive download error: {str(e)}'})
+                    continue
+
+                image_exts = {'.jpg', '.jpeg', '.png', '.webp', '.bmp'}
+                image_paths = []
+                for root, _, files in os.walk(tmp_dir):
+                    for f in sorted(files):
+                        if os.path.splitext(f)[1].lower() in image_exts:
+                            image_paths.append(os.path.join(root, f))
+
+                if not image_paths:
+                    results.append({'roll_no': roll_no, 'name': name, 'status': 'failed',
+                                     'message': 'No image files found in Drive folder'})
+                    continue
+
+                all_embeddings = []
+                for img_path in image_paths[:8]:
+                    try:
+                        faces = face_detector.detect_faces(img_path)
+                        if not faces:
+                            continue
+                        largest = max(faces, key=lambda f: (f['bbox'][2] - f['bbox'][0]) * (f['bbox'][3] - f['bbox'][1]))
+                        emb = face_recognizer.get_embedding(img_path, largest)
+                        if emb is not None:
+                            all_embeddings.append(emb)
+                    except Exception as e:
+                        logger.warning(f"[bulk-import] {name} — image error: {e}")
+
+                if not all_embeddings:
+                    results.append({'roll_no': roll_no, 'name': name, 'status': 'failed',
+                                     'message': 'No usable face found in any downloaded photo'})
+                    continue
+
+                avg_embedding = np.mean(all_embeddings, axis=0)
+                try:
+                    student_id = database.add_student(
+                        name, roll_no, avg_embedding,
+                        section=section, course=course, dept=dept, room_no=room_no
+                    )
+                    for emb in all_embeddings:
+                        database.add_embedding(student_id, emb)
+                    results.append({
+                        'roll_no': roll_no, 'name': name, 'status': 'success',
+                        'message': f'Registered with {len(all_embeddings)} photo(s)',
+                        'student_id': student_id
+                    })
+                except ValueError as e:
+                    results.append({'roll_no': roll_no, 'name': name, 'status': 'failed', 'message': str(e)})
+
+        success_count = sum(1 for r in results if r['status'] == 'success')
+        failed_count  = sum(1 for r in results if r['status'] == 'failed')
+        skipped_count = sum(1 for r in results if r['status'] == 'skipped')
+        logger.info(f"[bulk-import][drive] Done — {success_count} registered, {failed_count} failed, {skipped_count} skipped")
+
+        return jsonify({
+            'success': True,
+            'mode': 'drive',
+            'total':      len(results),
+            'registered': success_count,
+            'failed':     failed_count,
+            'skipped':    skipped_count,
+            'results':    results
+        })
+
+    except Exception as e:
+        logger.error(f"[bulk-import] Unexpected error: {str(e)}", exc_info=True)
+        return jsonify({'error': f'Bulk import failed: {str(e)}'}), 500
+    finally:
+        os.unlink(tmp_excel.name)
+
+
+# ── SELF-REGISTRATION ROUTES ─────────────────────────────────────────────────
+
+@app.route('/self-register/<token>', methods=['GET'])
+def self_register_get(token):
+    """Return student info for a valid, unused, unexpired token."""
+    info = database.get_token_info(token)
+    if not info:
+        return jsonify({'error': 'Invalid registration link'}), 404
+    if info['used_at']:
+        return jsonify({'error': 'This registration link has already been used'}), 410
+    from datetime import datetime as dt
+    if dt.fromisoformat(info['expires_at']) < dt.now():
+        return jsonify({'error': 'This registration link has expired. Please contact faculty.'}), 410
+    return jsonify({
+        'valid': True,
+        'name':    info['name'],
+        'roll_no': info['roll_no'],
+        'section': info['section'],
+        'course':  info['course'],
+        'dept':    info['dept'],
+        'room_no': info['room_no'],
+        'already_registered': bool(info['has_embedding'])
+    })
+
+
+@app.route('/self-register/<token>', methods=['POST'])
+def self_register_post(token):
+    """Accept face photos from student, generate embeddings, complete registration."""
+    info = database.get_token_info(token)
+    if not info:
+        return jsonify({'error': 'Invalid registration link'}), 404
+    if info['used_at']:
+        return jsonify({'error': 'This registration link has already been used'}), 410
+    from datetime import datetime as dt
+    if dt.fromisoformat(info['expires_at']) < dt.now():
+        return jsonify({'error': 'Registration link expired'}), 410
+
+    images = request.files.getlist('images')
+    if not images or len(images) == 0:
+        return jsonify({'error': 'Please provide at least one photo'}), 400
+
+    student_id = info['student_id']
+    name       = info['name']
+    roll_no    = info['roll_no']
+
+    all_embeddings = []
+    failed_images  = 0
+
+    for idx, image_file in enumerate(images[:8]):
+        if not image_file or not allowed_file(image_file.filename):
+            failed_images += 1
+            continue
+        filename = f"selfreg_{roll_no}_{idx}_{datetime.now().strftime('%Y%m%d%H%M%S%f')}.jpg"
+        filepath = save_image(image_file, filename)
+        try:
+            faces = face_detector.detect_faces(filepath)
+            if not faces:
+                failed_images += 1
+                logger.warning(f"[self-register] {name} image {idx}: no face detected")
+                continue
+            largest = max(faces, key=lambda f: (f['bbox'][2] - f['bbox'][0]) * (f['bbox'][3] - f['bbox'][1]))
+            emb = face_recognizer.get_embedding(filepath, largest)
+            if emb is not None:
+                all_embeddings.append(emb)
+            else:
+                failed_images += 1
+        except Exception as e:
+            failed_images += 1
+            logger.warning(f"[self-register] {name} image {idx} error: {e}")
+        finally:
+            if os.path.exists(filepath):
+                os.remove(filepath)
+
+    if not all_embeddings:
+        return jsonify({'error': 'No face could be detected in your photos. Please try with clearer, well-lit photos.'}), 400
+
+    avg_embedding = np.mean(all_embeddings, axis=0)
+    database.update_student_embedding(student_id, avg_embedding)
+    for emb in all_embeddings:
+        database.add_embedding(student_id, emb)
+    database.mark_token_used(token)
+
+    logger.info(f"[self-register] ✅ {name} ({roll_no}) registered — {len(all_embeddings)} embeddings")
+    return jsonify({
+        'success': True,
+        'name': name,
+        'roll_no': roll_no,
+        'photos_used': len(all_embeddings),
+        'photos_failed': failed_images
+    })
+
 
 @app.route('/students/<int:student_id>', methods=['DELETE'])
 def delete_student(student_id):
@@ -882,63 +1202,130 @@ def extract_faces():
 @app.route('/add_embedding/<int:student_id>', methods=['POST'])
 def add_embedding_to_student(student_id):
     """
-    Add a new face embedding to an existing student
-    Expects: face_filename (from extract_faces endpoint)
+    Add new face embeddings to an existing student.
+    Accepts multipart/form-data with one or more image files under the key 'images'.
     """
     try:
-        # Get face filename
-        data = request.get_json()
-        face_filename = data.get('face_filename')
-        
-        if not face_filename:
-            return jsonify({'error': 'No face_filename provided'}), 400
-        
-        # Verify student exists
         student = database.get_student_by_id(student_id)
         if not student:
             return jsonify({'error': f'Student with ID {student_id} not found'}), 404
-        
-        logger.info(f"Adding embedding to student {student_id}: {student['name']}")
-        
-        # Get face file path
-        face_path = os.path.join(UPLOAD_FOLDER, face_filename)
-        
-        if not os.path.exists(face_path):
-            return jsonify({'error': 'Face image not found'}), 404
-        
-        # Detect face in the cropped image
-        faces = face_detector.detect_faces(face_path)
-        
-        if len(faces) == 0:
-            return jsonify({'error': 'No face detected in the selected image'}), 400
-        
-        # Use the first (and should be only) face
-        face = faces[0]
-        
-        # Generate embedding
-        embedding = face_recognizer.get_embedding(face_path, face)
-        
-        if embedding is None:
-            return jsonify({'error': 'Failed to generate face embedding'}), 500
-        
-        # Add embedding to database
-        database.add_embedding(student_id, embedding)
-        
-        # Clean up face image
-        os.remove(face_path)
-        
-        logger.info(f"Successfully added embedding to student {student_id}")
-        
+
+        images = request.files.getlist('images')
+        if not images or len(images) == 0:
+            return jsonify({'error': 'No images provided. Send image files under the key "images".'}), 400
+
+        logger.info(f"Adding embeddings to student {student_id} ({student['name']}) — {len(images)} image(s)")
+
+        all_embeddings = []
+        failed = 0
+
+        for idx, image_file in enumerate(images):
+            if not image_file or not allowed_file(image_file.filename):
+                failed += 1
+                continue
+
+            filename = f"addemb_{student_id}_{idx}_{datetime.now().strftime('%Y%m%d%H%M%S%f')}.jpg"
+            filepath = save_image(image_file, filename)
+            try:
+                faces = face_detector.detect_faces(filepath)
+                if not faces:
+                    failed += 1
+                    logger.warning(f"No face in image {idx} for student {student_id}")
+                    continue
+                largest = max(faces, key=lambda f: (f['bbox'][2] - f['bbox'][0]) * (f['bbox'][3] - f['bbox'][1]))
+                embedding = face_recognizer.get_embedding(filepath, largest)
+                if embedding is not None:
+                    all_embeddings.append(embedding)
+                else:
+                    failed += 1
+            except Exception as e:
+                failed += 1
+                logger.warning(f"Error processing image {idx} for student {student_id}: {e}")
+            finally:
+                if os.path.exists(filepath):
+                    os.remove(filepath)
+
+        if not all_embeddings:
+            return jsonify({'error': 'No usable face found in any of the provided images'}), 400
+
+        for emb in all_embeddings:
+            database.add_embedding(student_id, emb)
+
+        # Refresh in-memory face index
+        face_recognizer.build_student_index(database.get_all_students(), database)
+
+        logger.info(f"Added {len(all_embeddings)} embedding(s) to student {student_id} ({student['name']})")
+
         return jsonify({
             'success': True,
-            'message': f"Successfully added embedding to {student['name']}",
+            'message': f"Added {len(all_embeddings)} embedding(s) to {student['name']}",
             'student_id': student_id,
-            'student_name': student['name']
+            'student_name': student['name'],
+            'embeddings_added': len(all_embeddings),
+            'images_failed': failed
         })
-    
+
     except Exception as e:
         logger.error(f"Error adding embedding: {str(e)}", exc_info=True)
         return jsonify({'error': f'Failed to add embedding: {str(e)}'}), 500
+
+@app.route('/assign_face/<int:student_id>', methods=['POST'])
+def assign_face_to_student(student_id):
+    """
+    Assign an already-extracted face crop (from /extract_faces) to a student.
+    Accepts JSON: {"face_filename": "face_0_....jpg"}
+    """
+    try:
+        student = database.get_student_by_id(student_id)
+        if not student:
+            return jsonify({'error': f'Student {student_id} not found'}), 404
+
+        data = request.get_json()
+        if not data or 'face_filename' not in data:
+            return jsonify({'error': 'face_filename is required'}), 400
+
+        face_filename = data['face_filename']
+        face_path = os.path.join(UPLOAD_FOLDER, face_filename)
+
+        if not os.path.exists(face_path):
+            return jsonify({'error': 'Face file not found. It may have expired.'}), 404
+
+        # Detect the face in the already-cropped image and compute its embedding
+        faces = face_detector.detect_faces(face_path)
+        if faces:
+            largest = max(faces, key=lambda f: (f['bbox'][2] - f['bbox'][0]) * (f['bbox'][3] - f['bbox'][1]))
+            embedding = face_recognizer.get_embedding(face_path, largest)
+        else:
+            # Crop is very tight; try with a dummy full-image bbox
+            h, w = cv2.imread(face_path).shape[:2]
+            dummy_face = {'bbox': [0, 0, w, h], 'confidence': 1.0}
+            embedding = face_recognizer.get_embedding(face_path, dummy_face)
+
+        if embedding is None:
+            return jsonify({'error': 'Could not compute embedding for this face'}), 400
+
+        database.add_embedding(student_id, embedding)
+        face_recognizer.build_student_index(database.get_all_students(), database)
+
+        # Clean up the temporary face crop
+        try:
+            os.remove(face_path)
+        except Exception:
+            pass
+
+        logger.info(f"Assigned face '{face_filename}' to student {student_id} ({student['name']})")
+
+        return jsonify({
+            'success': True,
+            'message': f"Face assigned to {student['name']}",
+            'student_id': student_id,
+            'student_name': student['name']
+        })
+
+    except Exception as e:
+        logger.error(f"Error assigning face: {str(e)}", exc_info=True)
+        return jsonify({'error': f'Failed to assign face: {str(e)}'}), 500
+
 
 if __name__ == '__main__':
     logger.info("Starting Face Recognition Attendance System Backend...")
