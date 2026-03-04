@@ -30,7 +30,7 @@ CORS(app)
 UPLOAD_FOLDER = 'uploads'
 UNRECOGNIZED_FOLDER = 'unrecognized'
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg'}
-CONFIDENCE_THRESHOLD = 0.77  # 82% similarity required (Facenet512 optimal threshold)
+CONFIDENCE_THRESHOLD = 0.769  # Cosine similarity threshold
 
 # Create necessary folders
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -55,85 +55,53 @@ def allowed_file(filename):
 
 def process_single_face_for_attendance(face_idx, face, filepath, all_students, recognized_student_ids_lock, recognized_student_ids):
     """
-    Process a single face for attendance (thread-safe)
-    Returns: (recognized_student, unrecognized_face_data) - one will be None
+    Process a single face for attendance (thread-safe).
+    Uses vectorised matrix search via find_match for fast, accurate matching.
+    Returns: (recognized_student, unrecognized_face_data) — one will be None
     """
     try:
         logger.info(f"Processing Face #{face_idx + 1}...")
-        
-        # Get embedding for this face
+
         embedding = face_recognizer.get_embedding(filepath, face)
-        
         if embedding is None:
-            logger.info(f"  ❌ Face #{face_idx + 1}: Failed to generate embedding")
+            logger.info(f"  ❌ Face #{face_idx + 1}: failed to generate embedding")
             return None, None
-        
-        # Check similarity against ALL students' embeddings
-        best_match_student = None
-        best_similarity = CONFIDENCE_THRESHOLD  # Must beat threshold
-        all_similarities = []  # Track all similarities for logging
-        
-        for student in all_students:
-            # Thread-safe check: Skip students already marked present
+
+        # Filter out already-marked students for this image
+        with recognized_student_ids_lock:
+            remaining_students = [s for s in all_students if s['id'] not in recognized_student_ids]
+
+        if not remaining_students:
+            return None, None
+
+        # Matrix search — single BLAS multiply across all remaining students
+        result = face_recognizer.find_match(
+            embedding, remaining_students, threshold=CONFIDENCE_THRESHOLD, db=database
+        )
+
+        if result is not None:
+            student_id, confidence = result
+            student = next((s for s in remaining_students if s['id'] == student_id), None)
+            if student is None:
+                return None, None
+
             with recognized_student_ids_lock:
-                if student['id'] in recognized_student_ids:
-                    continue
-            
-            max_similarity = 0.0
-            
-            # Check primary embedding
-            if 'embedding' in student and student['embedding'] is not None:
-                # Use compare_embeddings which handles all formats (JSON, bytes, dict, etc.)
-                similarity = face_recognizer.compare_embeddings(embedding, student['embedding'])
-                max_similarity = max(max_similarity, similarity)
-            
-            # Check additional embeddings
-            additional_embeddings = database.get_student_embeddings(student['id'])
-            for emb_data in additional_embeddings:
-                # emb_data is a dict with 'embedding' key containing JSON string
-                similarity = face_recognizer.compare_embeddings(embedding, emb_data)
-                max_similarity = max(max_similarity, similarity)
-            
-            # Track similarity for logging
-            all_similarities.append((student['name'], max_similarity))
-            
-            # Track best match for this face
-            if max_similarity > best_similarity:
-                best_similarity = max_similarity
-                best_match_student = student
-        
-        # Log top 3 matches for debugging
-        all_similarities.sort(key=lambda x: x[1], reverse=True)
-        logger.info(f"  Top 3 matches: {all_similarities[:3]}")
-        
-        # If we found a match, mark present (thread-safe)
-        if best_match_student:
-            with recognized_student_ids_lock:
-                # Double-check student wasn't already marked by another thread
-                if best_match_student['id'] in recognized_student_ids:
-                    logger.info(f"  ⚠️ Face #{face_idx + 1}: Student already marked present by another thread")
+                if student_id in recognized_student_ids:
+                    logger.info(f"  ⚠️ Face #{face_idx + 1}: already marked by another thread")
                     return None, None
-                
-                recognized_student_ids.add(best_match_student['id'])
-            
-            logger.info(f"  ✅ Face #{face_idx + 1}: MATCH - {best_match_student['name']} (similarity: {best_similarity:.3f})")
-            
+                recognized_student_ids.add(student_id)
+
+            logger.info(f"  ✅ Face #{face_idx + 1}: MATCH — {student['name']} (confidence: {confidence:.4f})")
             return {
-                'id': best_match_student['id'],
-                'name': best_match_student['name'],
-                'roll_no': best_match_student['roll_no'],
-                'confidence': float(best_similarity)
+                'id': student['id'],
+                'name': student['name'],
+                'roll_no': student['roll_no'],
+                'confidence': float(confidence)
             }, None
         else:
-            # No match found - save as unrecognized
-            logger.info(f"  ❌ Face #{face_idx + 1}: No match found (below threshold {CONFIDENCE_THRESHOLD})")
-            
-            bbox = face['bbox']
-            return None, {
-                'bbox': bbox,
-                'embedding': embedding
-            }
-    
+            logger.info(f"  ❌ Face #{face_idx + 1}: no match (below threshold {CONFIDENCE_THRESHOLD})")
+            return None, {'bbox': face['bbox'], 'embedding': embedding}
+
     except Exception as e:
         logger.error(f"Error processing face {face_idx}: {str(e)}")
         return None, None
@@ -381,10 +349,11 @@ def process_attendance():
         # Clean up temporary file
         os.remove(filepath)
         
-        # Mark attendance for recognized students as present
+        # Mark attendance for recognized students as present (with confidence)
         today = datetime.now().strftime('%Y-%m-%d')
         for student in recognized_students:
-            database.mark_attendance(student['id'], today, 'present')
+            database.mark_attendance(student['id'], today, 'present',
+                                     confidence=student.get('confidence'))
         
         # Get today's attendance to check who is already marked present
         today_attendance = database.get_attendance_by_date(today)
@@ -498,10 +467,11 @@ def process_attendance_batch():
                 logger.error(f"Error processing photo {image_file.filename}: {str(e)}")
                 continue
         
-        # Mark attendance for recognized students as present
+        # Mark attendance for recognized students as present (with confidence)
         today = datetime.now().strftime('%Y-%m-%d')
         for student in all_recognized_students:
-            database.mark_attendance(student['id'], today, 'present')
+            database.mark_attendance(student['id'], today, 'present',
+                                     confidence=student.get('confidence'))
         
         # Get today's attendance to check who is already marked present
         today_attendance = database.get_attendance_by_date(today)
@@ -587,24 +557,29 @@ def get_dashboard_stats():
         # Get today's attendance
         today_attendance = database.get_attendance_by_date(today)
         
-        # Create a map of student_id to attendance status
+        # Create a map of student_id to attendance status + confidence
         attendance_map = {}
         for record in today_attendance:
             if record.get('status'):
-                attendance_map[record['id']] = record['status']
-        
+                attendance_map[record['id']] = {
+                    'status': record['status'],
+                    'confidence': record.get('confidence')
+                }
+
         # Convert students to JSON-serializable format with attendance status
         all_students = []
         for student in all_students_data:
             student_id = student['id']
-            # Get attendance status: 'present', 'absent', or 'N/A' if not recorded
-            attendance_status = attendance_map.get(student_id, 'N/A')
-            
+            att = attendance_map.get(student_id, {})
+            attendance_status = att.get('status', 'N/A')
+            attendance_confidence = att.get('confidence')  # None for manual marks
+
             all_students.append({
                 'id': student_id,
                 'name': student['name'],
                 'roll_no': student['roll_no'],
-                'attendance_status': attendance_status
+                'attendance_status': attendance_status,
+                'attendance_confidence': attendance_confidence
             })
         
         # Count present and absent
@@ -727,61 +702,36 @@ def recognize_face():
         
         decode_time = (datetime.now() - start_time).total_seconds()
         logger.info(f"⏱️ Image decode + embedding: {decode_time*1000:.0f}ms")
-            
-        # SPEED: Get cached student embeddings (already optimized with LRU cache)
+
         students = database.get_all_students()
-        
         if not students:
             logger.info("No students registered in database")
             return jsonify({'name': None})
-        
+
         match_start = datetime.now()
-        best_match = None
-        best_similarity = 0
-        
-        # OPTIMIZED: Compare with primary embedding first (faster)
-        for student in students:
-            # Check primary embedding first
-            if 'embedding' in student and student['embedding']:
-                similarity = face_recognizer.compare_embeddings(embedding, student['embedding'])
-                
-                if similarity >= CONFIDENCE_THRESHOLD and similarity > best_similarity:
-                    best_similarity = similarity
-                    best_match = student
-                    # SPEED: Early exit if we get very high confidence (>0.85)
-                    if similarity > 0.85:
-                        logger.info(f"⚡ HIGH CONFIDENCE match found, skipping additional embeddings")
-                        break
-        
-        # If no high-confidence match, check additional embeddings
-        if best_similarity < 0.85 and best_match is None:
-            for student in students:
-                additional_embeddings = database.get_student_embeddings(student['id'])
-                
-                for stored_embedding in additional_embeddings:
-                    similarity = face_recognizer.compare_embeddings(embedding, stored_embedding)
-                    
-                    if similarity > best_similarity and similarity >= CONFIDENCE_THRESHOLD:
-                        best_similarity = similarity
-                        best_match = student
-                        
-                        # SPEED: Early exit on very high confidence
-                        if similarity > 0.85:
-                            break
-                
-                if best_similarity > 0.85:
-                    break
-        
+
+        # Matrix search — single BLAS multiply across all students
+        result = face_recognizer.find_match(
+            embedding, students, threshold=CONFIDENCE_THRESHOLD, db=database
+        )
+
         match_time = (datetime.now() - match_start).total_seconds()
         total_time = (datetime.now() - start_time).total_seconds()
-                    
+
+        if result is not None:
+            student_id, confidence = result
+            best_match = next((s for s in students if s['id'] == student_id), None)
+            best_similarity = confidence
+        else:
+            best_match = None
+            best_similarity = 0.0
+
         if best_match:
-            logger.info(f"✅ RECOGNIZED: {best_match['name']} ({best_similarity:.3f}) in {total_time*1000:.0f}ms")
-            
-            # AUTOMATICALLY MARK ATTENDANCE AS PRESENT
+            logger.info(f"✅ RECOGNIZED: {best_match['name']} ({best_similarity:.4f}) in {total_time*1000:.0f}ms")
             today = datetime.now().strftime('%Y-%m-%d')
-            attendance_marked = database.mark_attendance(best_match['id'], today, 'present')
-            
+            attendance_marked = database.mark_attendance(
+                best_match['id'], today, 'present', confidence=best_similarity
+            )
             return jsonify({
                 'name': best_match['name'],
                 'student_id': best_match['id'],
@@ -791,7 +741,7 @@ def recognize_face():
                 'processing_time_ms': int(total_time * 1000)
             })
         else:
-            logger.info(f"❌ Not recognized (best: {best_similarity:.3f}) in {total_time*1000:.0f}ms")
+            logger.info(f"❌ Not recognized (best: {best_similarity:.4f}) in {total_time*1000:.0f}ms")
             return jsonify({'name': None})
             
     except Exception as e:
@@ -819,8 +769,8 @@ def mark_attendance():
         # Get today's date
         today = datetime.now().strftime('%Y-%m-%d')
         
-        # Mark attendance in database
-        success = database.mark_attendance(student_id, today, status)
+        # Mark attendance in database with force_override=True for manual marking
+        success = database.mark_attendance(student_id, today, status, force_override=True)
         
         if success:
             # Get student info for logging

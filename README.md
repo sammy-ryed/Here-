@@ -1,12 +1,22 @@
-﻿#  Face Recognition Attendance System - Complete Documentation
-## add red box on the faces yello for unrecogonised, green for presewnt and .
-> **A production-ready desktop application for automated attendance management using AI-powered face recognition**
+﻿# 🚀 Face Recognition Attendance System - Next.js Edition
+> **A modern web application for automated attendance management using AI-powered face recognition**
 
-[![Java](https://img.shields.io/badge/Java-17+-orange.svg)](https://www.oracle.com/java/)
-[![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://www.python.org/)
-[![JavaFX](https://img.shields.io/badge/JavaFX-17.0.2-brightgreen.svg)](https://openjfx.io/)
+[![Next.js](https://img.shields.io/badge/Next.js-15-black.svg)](https://nextjs.org/)
+[![React](https://img.shields.io/badge/React-19-blue.svg)](https://react.dev/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5-blue.svg)](https://www.typescriptlang.org/)
+[![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
 [![Flask](https://img.shields.io/badge/Flask-2.3.3-black.svg)](https://flask.palletsprojects.com/)
-[![License](https://img.shields.io/badge/License-Educational-yellow.svg)]()
+
+---
+
+## ✨ What Changed
+
+**Frontend completely migrated to Next.js!** No more Java/JavaFX - everything is now modern web technology:
+- ⚡ **Next.js 15** with React 19 and TypeScript
+- 🎨 **Tailwind CSS** for beautiful, responsive UI
+- 📱 **Mobile-friendly** - works on any device
+- 🚀 **Faster** - instant page loads, no Java installation needed
+- 🔥 **Hot reload** - changes appear instantly during development
 
 ---
 
@@ -14,40 +24,27 @@
 
 1. [Overview](#-overview)
 2. [Features](#-features)
-3. [System Architecture](#-system-architecture)
+3. [Quick Start](#-quick-start)
 4. [Technology Stack](#-technology-stack)
-5. [Installation](#-installation--setup)
-6. [Quick Start](#-quick-start)
-7. [Usage Guide](#-usage-guide)
-8. [API Documentation](#-api-documentation)
-9. [Configuration](#-configuration)
-10. [Database Schema](#-database-schema)
-11. [Troubleshooting](#-troubleshooting)
-12. [Advanced Features](#-advanced-features)
-13. [Performance & Accuracy](#-performance--accuracy)
-14. [Development Guide](#-development-guide)
-15. [Deployment](#-deployment)
-16. [Project Structure](#-project-structure)
+5. [API Documentation](#-api-documentation)
+6. [Development Guide](#-development-guide)
 
 ---
 
 ##  Overview
 
-This **Face Recognition Attendance System** is a comprehensive desktop application that automates classroom attendance using state-of-the-art AI technology. It combines a modern JavaFX frontend with a powerful Python backend, leveraging **RetinaFace** for face detection and **Facenet512 (MobileFaceNet)** for face recognition.
+This **Face Recognition Attendance System** is a modern web application that automates classroom attendance using state-of-the-art AI technology. It combines a **Next.js/React** frontend with a powerful **Python Flask** backend, leveraging **RetinaFace** for face detection and **Facenet512 (MobileFaceNet)** for face recognition.
 
 ### Key Highlights
 
--  **High Accuracy** - 95%+ recognition rate with proper training data (90%+ even with partial faces!)
--  **Fast Processing** - Process group photos in 1-2 seconds (3-5x faster with Facenet512!)
+-  **Modern Web UI** - Beautiful, responsive Next.js interface
+-  **High Accuracy** - 95%+ recognition rate with proper training data
+-  **Fast Processing** - Process group photos in 1-2 seconds
 -  **Multi-Face Support** - Detect 40+ faces in a single photo
--  **Batch Processing** - Upload multiple photos at once
--  **Real-Time Updates** - Auto-refreshing dashboard with live statistics
+-  **Real-Time Webcam** - Live face recognition with webcam
 -  **Smart Attendance** - Never overwrite present status with absent
--  **Partial Face Recognition** - Works even with side profiles and occlusions
--  **Performance Optimized** - GPU acceleration, caching, smart enhancement
--  **Manual Attendance** - Mark students Present/Absent manually from dashboard
--  **Comprehensive Dashboard** - View statistics, trends, and student lists
--  **Update Student Recognition** - Add new face embeddings to existing students
+-  **Mobile Friendly** - Works on desktop, tablet, and mobile
+-  **Easy Setup** - Just two batch files to run everything
 -  **Data Management** - Delete individual students or clear all data
 -  **Offline Capable** - Works completely offline after setup
 -  **Modern UI** - Clean, intuitive interface with blue/white theme

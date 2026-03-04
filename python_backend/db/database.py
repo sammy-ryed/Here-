@@ -109,11 +109,19 @@ class Database:
                 student_id INTEGER NOT NULL,
                 date TEXT NOT NULL,
                 status TEXT NOT NULL,
+                confidence REAL DEFAULT NULL,
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE,
                 UNIQUE(student_id, date)
             )
         ''')
+
+        # Add confidence column for existing databases
+        try:
+            cursor.execute("ALTER TABLE attendance ADD COLUMN confidence REAL DEFAULT NULL")
+            logger.info("Added confidence column to attendance table")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
         
         # Create indexes for better performance
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_roll_no ON students(roll_no)')
@@ -352,49 +360,48 @@ class Database:
         # Convert cached tuple back to list
         return list(self.get_all_students_cached())
     
-    def mark_attendance(self, student_id, date, status):
+    def mark_attendance(self, student_id, date, status, force_override=False, confidence=None):
         """
-        Mark attendance for a student
-        CRITICAL RULE: Never overwrite 'present' with 'absent'
-        
+        Mark attendance for a student.
+        RULE: Never overwrite 'present' with 'absent' unless force_override=True.
+
         Args:
-            student_id: Student ID
-            date: Date in YYYY-MM-DD format
-            status: 'present' or 'absent'
-            
+            student_id     : Student ID
+            date           : Date in YYYY-MM-DD format
+            status         : 'present' or 'absent'
+            force_override : Allow overwriting present→absent (manual use)
+            confidence     : Recognition confidence score (0-1), None for manual marks
+
         Returns:
-            bool: True if successful, False otherwise
+            bool: True if successful
         """
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
-            
-            # Check if student already marked present today
-            cursor.execute('''
-                SELECT status FROM attendance 
-                WHERE student_id = ? AND date = ?
-            ''', (student_id, date))
-            
+
+            cursor.execute(
+                'SELECT status FROM attendance WHERE student_id = ? AND date = ?',
+                (student_id, date)
+            )
             existing = cursor.fetchone()
-            
-            # CRITICAL: Never overwrite 'present' with 'absent'
-            if existing and existing['status'] == 'present' and status == 'absent':
-                logger.info(f"⚠️ Skipping: Student {student_id} already marked PRESENT on {date}")
+
+            # Never overwrite present→absent unless forced (manual override)
+            if existing and existing['status'] == 'present' and status == 'absent' and not force_override:
+                logger.info(f"⚠️ Skipping: Student {student_id} already PRESENT on {date}")
                 conn.close()
-                return True  # Return success but don't overwrite
-            
-            # Insert or update attendance
-            cursor.execute('''
-                INSERT OR REPLACE INTO attendance (student_id, date, status)
-                VALUES (?, ?, ?)
-            ''', (student_id, date, status))
-            
+                return True
+
+            cursor.execute(
+                'INSERT OR REPLACE INTO attendance (student_id, date, status, confidence) VALUES (?, ?, ?, ?)',
+                (student_id, date, status, confidence)
+            )
             conn.commit()
             conn.close()
-            
-            logger.info(f"✅ Marked student {student_id} as {status} on {date}")
+
+            conf_str = f" (confidence: {confidence:.3f})" if confidence is not None else ""
+            logger.info(f"✅ Marked student {student_id} as {status} on {date}{conf_str}")
             return True
-            
+
         except Exception as e:
             logger.error(f"Error marking attendance: {str(e)}")
             return False
@@ -404,19 +411,18 @@ class Database:
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
-            
+
             cursor.execute('''
-                SELECT s.id, s.name, s.roll_no, a.status, a.timestamp
+                SELECT s.id, s.name, s.roll_no, a.status, a.confidence, a.timestamp
                 FROM students s
                 LEFT JOIN attendance a ON s.id = a.student_id AND a.date = ?
                 ORDER BY s.name
             ''', (date,))
-            
+
             rows = cursor.fetchall()
             conn.close()
-            
             return [dict(row) for row in rows]
-            
+
         except Exception as e:
             logger.error(f"Error getting attendance: {str(e)}")
             return []

@@ -1,7 +1,9 @@
 @echo off
 echo ============================================
-echo Starting Frontend - Face Recognition App
+echo Starting Frontend - Next.js App
 echo ============================================
-cd /d "%~dp0\java_app"
-C:\maven\apache-maven-3.9.9\bin\mvn.cmd clean compile exec:java "-Dexec.mainClass=com.attendance.MainApp"
+echo Opening browser at http://localhost:3000
+echo ============================================
+cd /d "%~dp0\frontend"
+npm run dev
 pause
