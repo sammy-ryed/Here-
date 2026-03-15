@@ -717,12 +717,18 @@ def bulk_import_students():
             })
 
         # ── DRIVE MODE (legacy) ───────────────────────────────────────────────
+        BLANK_LINK_VALUES = {'', 'na', 'n/a', 'none', 'nil', '-', '--', 'n.a.', 'n.a', 'null'}
+
+        def is_blank_link(val: str) -> bool:
+            return val.lower().strip() in BLANK_LINK_VALUES
+
         try:
             import gdown
         except ImportError:
             return jsonify({'error': 'gdown is not installed. Run: pip install gdown'}), 500
 
         results = []
+        token_results = []
         for row_idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
             if not any(row):
                 continue
@@ -739,9 +745,36 @@ def bulk_import_students():
             dept       = cell('dept') or None
             room_no    = cell('room_no') or None
 
-            if not name or not roll_no or not drive_link:
+            if not name or not roll_no:
                 results.append({'roll_no': roll_no or f'row_{row_idx}', 'name': name,
-                                 'status': 'skipped', 'message': 'Missing name, roll_no, or drive_link'})
+                                 'status': 'skipped', 'message': 'Missing name or roll_no'})
+                continue
+
+            # No drive link provided — fall back to token registration
+            if is_blank_link(drive_link):
+                if database.get_student_by_roll_no(roll_no):
+                    token_results.append({'roll_no': roll_no, 'name': name,
+                                          'status': 'skipped', 'message': 'Already in system'})
+                    continue
+                try:
+                    student_id = database.add_pending_student(
+                        name, roll_no, section=section, course=course, dept=dept, room_no=room_no
+                    )
+                    token = database.create_registration_token(student_id, expires_days=7)
+                    token_results.append({
+                        'roll_no': roll_no, 'name': name,
+                        'status': 'pending', 'token': token,
+                        'message': 'No drive link — awaiting self-registration'
+                    })
+                    logger.info(f"[bulk-import] No drive link for {name} ({roll_no}), generated token")
+                except ValueError as e:
+                    token_results.append({'roll_no': roll_no, 'name': name,
+                                          'status': 'failed', 'message': str(e)})
+                continue
+
+            if not drive_link:
+                results.append({'roll_no': roll_no or f'row_{row_idx}', 'name': name,
+                                 'status': 'skipped', 'message': 'Missing drive_link'})
                 continue
 
             if database.get_student_by_roll_no(roll_no):
@@ -810,16 +843,23 @@ def bulk_import_students():
         success_count = sum(1 for r in results if r['status'] == 'success')
         failed_count  = sum(1 for r in results if r['status'] == 'failed')
         skipped_count = sum(1 for r in results if r['status'] == 'skipped')
-        logger.info(f"[bulk-import][drive] Done — {success_count} registered, {failed_count} failed, {skipped_count} skipped")
+        token_pending = sum(1 for t in token_results if t['status'] == 'pending')
+        token_skipped = sum(1 for t in token_results if t['status'] == 'skipped')
+        token_failed  = sum(1 for t in token_results if t['status'] == 'failed')
+        logger.info(f"[bulk-import][drive] Done — {success_count} registered, {failed_count} failed, {skipped_count} skipped, {token_pending} tokens")
 
+        mode = 'mixed' if token_results else 'drive'
         return jsonify({
             'success': True,
-            'mode': 'drive',
-            'total':      len(results),
+            'mode': mode,
+            'total':      len(results) + len(token_results),
             'registered': success_count,
-            'failed':     failed_count,
-            'skipped':    skipped_count,
-            'results':    results
+            'failed':     failed_count + token_failed,
+            'skipped':    skipped_count + token_skipped,
+            'results':    results,
+            # token portion (only present in mixed mode)
+            'pending':    token_pending,
+            'tokens':     token_results if token_results else None,
         })
 
     except Exception as e:

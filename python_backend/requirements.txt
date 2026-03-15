@@ -13,6 +13,7 @@ deepface==0.0.92
 # Deep Learning Frameworks
 tensorflow>=2.20.0
 tf-keras>=2.20.0
+protobuf>=4.21.0
 
 # Image Processing (Python 3.13 compatible versions)
 opencv-python==4.10.0.84

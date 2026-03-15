@@ -25,11 +25,11 @@ export default function Navigation() {
         <div className="flex items-center justify-between h-16">
           <div className="flex items-center space-x-3">
             <div className="w-8 h-8 bg-slate-900 flex items-center justify-center">
-              <span className="text-white font-bold text-sm">FA</span>
+              <span className="text-white font-bold text-sm">H</span>
             </div>
             <div>
-              <h1 className="text-lg font-semibold text-gray-900">Face Attendance</h1>
-              <p className="text-xs text-gray-500">Recognition System</p>
+              <h1 className="text-lg font-semibold text-gray-900">Here!</h1>
+              <p className="text-xs text-gray-500">proxy kya hota hai?!</p>
             </div>
           </div>
           <div className="flex items-center space-x-1">

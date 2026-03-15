@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useCallback } from 'react';
+import * as XLSX from 'xlsx';
 import { apiClient } from '@/lib/api';
 import { BulkImportResult, BulkImportTokenEntry, BulkImportStudentResult } from '@/lib/types';
 import { Upload, FileSpreadsheet, CheckCircle, XCircle, AlertCircle, Copy, Download, ChevronDown, ChevronUp, Clock } from 'lucide-react';
@@ -59,6 +60,16 @@ export default function BulkImport() {
     URL.revokeObjectURL(url);
   };
 
+  const downloadTemplate = () => {
+    const headers = ['Name', 'Roll No', 'Section', 'Course', 'Department', 'Room No'];
+    const ws = XLSX.utils.aoa_to_sheet([headers]);
+    // Column widths
+    ws['!cols'] = [22, 14, 10, 18, 22, 10].map(w => ({ wch: w }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Students');
+    XLSX.writeFile(wb, 'students_template.xlsx');
+  };
+
   const driveStatusRow = (s: BulkImportStudentResult) => {
     if (s.status === 'success') return 'bg-emerald-50 border-l-2 border-emerald-400';
     if (s.status === 'failed')  return 'bg-red-50 border-l-2 border-red-400';
@@ -93,27 +104,32 @@ export default function BulkImport() {
         </button>
 
         {showInstructions && (
-          <div className="px-5 pb-5 border-t border-gray-100 space-y-4">
+          <div className="px-5 pb-5 border-t border-gray-100 space-y-5">
 
-            {/* Self-registration mode */}
-            <div className="mt-4 space-y-2">
-              <p className="text-sm font-semibold text-slate-900">
-                Recommended — Self-Registration Mode
+            {/* Mode A — tokens */}
+            <div className="mt-4 space-y-3">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold uppercase tracking-wide bg-slate-900 text-white px-2 py-0.5">Mode A</span>
+                <p className="text-sm font-semibold text-slate-900">Self-Registration (recommended)</p>
+              </div>
+              <p className="text-sm text-gray-600">
+                Upload an Excel with student details — <strong>no photos needed from you</strong>.
+                The system creates a private one-time link per student. Send the links out; each student opens
+                their link and submits their own photos. Links expire in <strong>7 days</strong>.
               </p>
               <p className="text-sm text-gray-600">
-                Include only student details. The system generates a private link per student.
-                Each student opens their own link and takes their own photos — faculty never handles photos.
+                This mode is auto-selected whenever the sheet has <strong>no "Drive Link" column</strong>.
               </p>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm border border-gray-200">
                   <thead>
                     <tr className="bg-gray-50">
-                      {['Column', 'Required?', 'Example'].map(h => (
-                        <th key={h} className="text-left px-4 py-2 font-semibold text-gray-700 border-b border-gray-200">{h}</th>
+                      {['Column header', 'Required?', 'Example'].map(h => (
+                        <th key={h} className="text-left px-4 py-2 font-semibold text-gray-700 border-b border-gray-200 text-xs">{h}</th>
                       ))}
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-100">
+                  <tbody className="divide-y divide-gray-100 text-xs">
                     {[
                       ['Name',       true,  'Rahul Sharma'],
                       ['Roll No',    true,  'CS2024001'],
@@ -123,32 +139,46 @@ export default function BulkImport() {
                       ['Room No',    false, '301'],
                     ].map(([col, req, ex]) => (
                       <tr key={String(col)}>
-                        <td className="px-4 py-2 font-mono text-xs text-gray-800">{String(col)}</td>
+                        <td className="px-4 py-2 font-mono text-gray-800">{String(col)}</td>
                         <td className="px-4 py-2">
-                          <span className={`text-xs px-2 py-0.5 ${req ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-500'}`}>
+                          <span className={`px-2 py-0.5 ${req ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-500'}`}>
                             {req ? 'Required' : 'Optional'}
                           </span>
                         </td>
-                        <td className="px-4 py-2 text-gray-500 text-xs">{String(ex)}</td>
+                        <td className="px-4 py-2 text-gray-500">{String(ex)}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
+              <div className="flex items-center gap-3 pt-1">
+                <button
+                  onClick={downloadTemplate}
+                  className="inline-flex items-center gap-2 px-3 py-1.5 border border-slate-300 text-sm text-slate-700 hover:bg-slate-50 font-medium"
+                >
+                  <Download size={14} />
+                  Download Excel Template
+                </button>
+                <span className="text-xs text-gray-400">After import, copy or download all student links from the results table below.</span>
+              </div>
+            </div>
+
+            {/* Mode B — drive */}
+            <div className="border-t border-gray-100 pt-4 space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold uppercase tracking-wide bg-gray-500 text-white px-2 py-0.5">Mode B</span>
+                <p className="text-sm font-semibold text-gray-700">Drive Links (instant registration)</p>
+              </div>
+              <p className="text-sm text-gray-600">
+                Add a <code className="bg-gray-100 px-1 text-xs font-mono">Drive Link</code> column containing a public Google Drive <em>folder</em> link
+                for each student. The system downloads up to 8 photos per student, detects the face, and registers
+                them immediately — no token links are generated.
+              </p>
               <p className="text-xs text-gray-500">
-                After import, you can download a CSV of all registration links and distribute them (email / WhatsApp / LMS).
-                Links expire in <strong>7 days</strong>.
+                The Drive folder must be shared as <strong>"Anyone with the link can view"</strong>. Only .jpg / .jpeg / .png / .webp / .bmp files are used.
               </p>
             </div>
 
-            {/* Drive mode */}
-            <div className="border-t border-gray-100 pt-4 space-y-2">
-              <p className="text-sm font-semibold text-gray-700">Alternative — Drive Links Mode</p>
-              <p className="text-sm text-gray-600">
-                Add a <code className="bg-gray-100 px-1 text-xs">Drive Link</code> column with a public Google Drive folder link per student.
-                The system downloads the photos and registers students immediately (no individual links generated).
-              </p>
-            </div>
           </div>
         )}
       </div>
@@ -195,7 +225,7 @@ export default function BulkImport() {
       </div>
 
       {/* Token mode results */}
-      {result?.mode === 'tokens' && result.tokens && (
+      {(result?.mode === 'tokens' || result?.mode === 'mixed') && result.tokens && result.tokens.length > 0 && (
         <div className="bg-white border border-gray-200 p-6 space-y-5">
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-semibold text-gray-900">Registration Links Generated</h2>
@@ -279,7 +309,7 @@ export default function BulkImport() {
       )}
 
       {/* Drive mode results */}
-      {result?.mode === 'drive' && result.results && (
+      {(result?.mode === 'drive' || result?.mode === 'mixed') && result.results && result.results.length > 0 && (
         <div className="bg-white border border-gray-200 p-6 space-y-5">
           <h2 className="text-lg font-semibold text-gray-900">Import Results</h2>
           <div className="grid grid-cols-4 gap-4">

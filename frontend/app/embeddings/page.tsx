@@ -14,10 +14,10 @@ interface FaceState {
 }
 
 export default function AddEmbeddings() {
-  // â”€â”€ shared
+  // shared
   const [students, setStudents] = useState<Student[]>([]);
 
-  // â”€â”€ step 1: upload
+  // step 1: upload
   const [step, setStep] = useState<'upload' | 'select'>('upload');
   const [groupPhoto, setGroupPhoto] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string>('');
@@ -25,7 +25,7 @@ export default function AddEmbeddings() {
   const [extractError, setExtractError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // â”€â”€ step 2: select
+  // step 2: select
   const [faces, setFaces] = useState<ExtractedFace[]>([]);
   const [assignments, setAssignments] = useState<Record<number, number | ''>>({}); // faceIndex â†’ studentId
   const [faceStates, setFaceStates] = useState<Record<number, FaceState>>({});
@@ -138,7 +138,7 @@ export default function AddEmbeddings() {
       {/* â”€â”€â”€â”€â”€ STEP 1: Upload â”€â”€â”€â”€â”€ */}
       {step === 'upload' && (
         <div className="bg-white border border-gray-200 p-6 max-w-lg">
-          <h2 className="text-base font-medium text-gray-900 mb-4">Step 1 â€” Upload a photo</h2>
+          <h2 className="text-base font-medium text-gray-900 mb-4">Step 1: Upload a photo</h2>
 
           <div
             className="border-2 border-dashed border-gray-300 rounded p-8 text-center cursor-pointer hover:border-slate-500 transition-colors mb-4"
@@ -178,7 +178,7 @@ export default function AddEmbeddings() {
             {extractLoading ? (
               <>
                 <Loader2 size={16} className="animate-spin" />
-                Detecting facesâ€¦
+                Detecting faces!
               </>
             ) : (
               <>
@@ -212,7 +212,7 @@ export default function AddEmbeddings() {
 
           {allDone && (
             <div className="mb-5 p-3 border border-emerald-200 bg-emerald-50 text-emerald-700 text-sm">
-              All faces processed â€” {doneCount} assigned, {skippedCount} skipped
+              All faces processed {doneCount} assigned, {skippedCount} skipped
               {errorCount > 0 && `, ${errorCount} failed`}.
               <button onClick={handleReset} className="ml-3 underline font-medium">
                 Start over

@@ -30,12 +30,12 @@ export interface BulkImportTokenEntry {
 
 export interface BulkImportResult {
   success: boolean;
-  mode: 'tokens' | 'drive';
+  mode: 'tokens' | 'drive' | 'mixed';
   total: number;
-  // token mode
+  // token mode / mixed token portion
   pending?: number;
   tokens?: BulkImportTokenEntry[];
-  // drive mode
+  // drive mode / mixed drive portion
   registered?: number;
   results?: BulkImportStudentResult[];
   failed: number;

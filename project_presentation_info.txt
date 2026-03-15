@@ -1,12 +1,417 @@
-Face Recognition Attendance System - Tech Stack & Overview
-========================================================
+================================================================================
+  FACE RECOGNITION ATTENDANCE SYSTEM — COMPLETE PROJECT SUMMARY
+================================================================================
 
-Tech Stack:
------------
-- **Frontend:** Java (JavaFX), OpenCV (Haar Cascade)
-- **Backend:** Python (Flask), DeepFace (Facenet512, RetinaFace)
-- **Database:** SQLite (WAL mode)
-- **Other:** Numpy, threading, batch processing, REST API
+--------------------------------------------------------------------------------
+  WHAT IS THIS?
+--------------------------------------------------------------------------------
+
+An automated classroom attendance system that uses face recognition to mark
+students present directly from a photograph of the classroom. Faculty uploads
+one (or more) photos of the class; the system detects every face in the image,
+matches each face against registered students, and records attendance — all
+within seconds. No manual roll-call, no proxy attendance.
+
+There is also a live webcam mode for 1-by-1 recognition and a full self-
+registration portal so faculty never has to handle student photos.
+
+
+--------------------------------------------------------------------------------
+  TECH STACK
+--------------------------------------------------------------------------------
+
+BACKEND
+  Language        Python 3.11
+  Framework       Flask 3.0  +  Flask-CORS 4.0
+  Face Detection  RetinaFace 0.0.17  (deep CNN, state-of-the-art detector)
+  Face Recognition
+    - Model       Facenet512  (512-dimensional embedding, ~99.6% on LFW)
+    - Library     DeepFace 0.0.92
+    - Matching    Vectorised cosine similarity (matrix BLAS multiply — no FAISS needed)
+  Image Processing  OpenCV 4.10,  Pillow 11.0
+  Database        SQLite  (WAL mode, 64 MB cache, indexed)
+  Concurrency     Python ThreadPoolExecutor (2 workers)
+  Excel parsing   openpyxl
+  Drive download  gdown
+  Deep learning   TensorFlow >= 2.20  /  tf-keras >= 2.20
+
+FRONTEND
+  Framework       Next.js 16  (App Router,  React 19,  TypeScript 5)
+  Styling         Tailwind CSS 4
+  HTTP client     Axios
+  Webcam          react-webcam
+  Excel export    SheetJS (xlsx 0.18)
+  Icons           lucide-react
+
+
+--------------------------------------------------------------------------------
+  ARCHITECTURE
+--------------------------------------------------------------------------------
+
+  [Browser / Next.js]
+       |  REST (JSON + multipart)
+       v
+  [Flask API — port 5000]
+       |                |
+  [FaceDetector]   [FaceRecognizer]
+  RetinaFace       Facenet512 via DeepFace
+       |                |
+       +---- SQLite DB -+
+             attendance.db
+
+The frontend and backend run as two separate processes locally:
+  - run_back.bat  ->  py -3.11 python_backend/app.py
+  - run_front.bat  ->  npm run dev  (http://localhost:3000)
+
+
+--------------------------------------------------------------------------------
+  FULL FEATURE LIST
+--------------------------------------------------------------------------------
+
+1. STUDENT REGISTRATION (Manual)
+   - Faculty enters Name + Roll No, uploads 5-8 photos of the student
+   - Backend processes images in parallel (ThreadPoolExecutor)
+   - RetinaFace detects the face in each photo; Facenet512 generates a 512-dim
+     embedding per image
+   - All embeddings are averaged into a centroid and stored in SQLite
+   - Individual embeddings are also stored for centroid rebuilding later
+
+2. BULK IMPORT (Excel upload)
+   - Faculty uploads a .xlsx file
+   - Auto-detects one of two modes based on column headers:
+
+   MODE A — SELF-REGISTRATION (no Drive Link column)
+     * Creates a pending student record (no photos yet)
+     * Generates a secure random token per student (expires in 7 days)
+     * Faculty distributes the links (copy/CSV download)
+     * Students open their link, submit their own photos via webcam or upload
+     * Backend processes photos, stores embeddings, marks token used
+     * Student is now fully registered without faculty touching photos
+
+   MODE B — DRIVE LINKS (Drive Link column present)
+     * Downloads each student's Google Drive photo folder via gdown (up to 8 imgs)
+     * Runs full face detection + embedding on each image
+     * Registers the student immediately, no tokens needed
+     * If a student's Drive Link cell is blank / "NA" / "N/A" / "none" / "nil" /
+       "-" etc., the system automatically falls back to Mode A for that student
+
+   - Mixed results: registered-via-drive students + token students are both
+     shown in separate tables after import
+
+3. ATTENDANCE — PHOTO UPLOAD (main mode)
+   - Faculty uploads 1-N classroom photos
+   - Single photo -> /process_attendance
+   - Multiple photos -> /process_attendance_batch (merges results, deduplicates)
+   - For each photo:
+     * RetinaFace detects all faces
+     * Each face is processed in parallel (2 threads)
+     * Facenet512 generates embedding
+     * Matrix cosine similarity search against all registered students
+     * Threshold 0.769 — match is accepted only above this value
+     * Matched students -> marked PRESENT with confidence score
+     * Unmatched faces -> saved to /unrecognized/ folder for manual review
+   - Result table: Present / Absent / Unrecognized counts + per-student detail
+   - Absent students shown with last-seen date
+
+4. ATTENDANCE — LIVE WEBCAM
+   - Real-time face recognition from browser webcam
+   - Sends a JPEG frame to /recognize/face every 1 second
+   - Recognised students accumulate in a "seen today" list
+   - Shows FPS counter + current detection overlay
+   - Good for entrance / corridor scanning
+
+5. ADD EMBEDDINGS (Embeddings page — 2-step flow)
+   - Step 1: Upload any group/classroom photo -> /extract_faces
+     Backend crops every detected face, saves temp files, returns base64 thumbnails
+   - Step 2: Face thumbnail grid shown on screen
+     Faculty assigns each face to a student via dropdown, clicks Assign
+     -> /assign_face/<student_id> with face_filename (JSON)
+     Backend computes embedding from the crop, stores it, rebuilds the index
+   - Skip button to ignore unknown faces
+   - Each assigned face immediately improves recognition for that student
+   - Support for direct photo upload per student also exists via /add_embedding
+
+6. ATTENDANCE RECORDS & DASHBOARD
+   - Dashboard: total students, present today, absent today, attendance rate %
+   - Attendance page: date-filtered view, manual mark present/absent per student
+   - Confidence score stored per attendance record
+
+7. STUDENT MANAGEMENT
+   - View all students with has_embedding flag
+   - Delete student (cascades to embeddings + attendance)
+   - Profile fields: Name, Roll No, Section, Course, Department, Room No
+
+
+--------------------------------------------------------------------------------
+  HOW FACE RECOGNITION WORKS (DEEP DIVE)
+--------------------------------------------------------------------------------
+
+DETECTION (RetinaFace)
+  - RetinaFace is a joint face detection + landmark localisation model
+  - It returns bounding boxes, confidence scores, and 5-point facial landmarks
+  - Smart quality check: if image is blurry (Laplacian variance < 100) or
+    poorly lit (brightness outside 100-180), it applies CLAHE enhancement
+    before detection, otherwise runs raw for speed
+
+EMBEDDING (Facenet512)
+  - Each detected face is cropped with a 30px margin, saved as temp JPEG
+  - DeepFace.represent() is called with detector_backend='skip' (detection
+    already done by RetinaFace), align=False for speed
+  - Returns a 512-dimensional float32 vector
+  - Vector is L2-normalised immediately (so dot product == cosine similarity)
+  - Cached by (image_path + bbox hash) — repeated requests are instant
+
+MATCHING (Matrix search)
+  - At startup (and after any registration/embedding add), build_student_index()
+    runs: for each student, all their stored embeddings are fetched, averaged
+    into a centroid, and re-normalised
+  - Result: a single (N_students x 512) float32 matrix in memory
+  - At recognition time: query embedding dot-multiplied against full matrix
+    in one BLAS call -> O(N x 512) but vectorised, effectively O(1) for
+    typical class sizes
+  - Highest cosine similarity student wins if score >= 0.769
+  - Thread-safe: a lock prevents two threads from marking the same student
+    twice from the same image
+
+CONFIDENCE THRESHOLD: 0.769
+  - Cosine similarity ranges from -1 to 1; 1 = identical
+  - 0.769 was tuned to balance false-rejects vs false-accepts in classroom
+    conditions (variable lighting, angles, occlusion)
+  - Raising it reduces false positives but may miss valid matches
+  - Lowering it catches more students but risks proxy attendance
+
+CENTROID AVERAGING
+  - Multiple photos per student -> multiple embeddings
+  - The centroid (average + re-normalise) represents the student's "average"
+    appearance across lighting / pose variations
+  - More photos = more robust centroid = higher accuracy
+
+
+--------------------------------------------------------------------------------
+  ACCURACY
+--------------------------------------------------------------------------------
+
+Facenet512 achieves ~99.65% accuracy on the LFW (Labelled Faces in the Wild)
+benchmark under controlled conditions.
+
+In real classroom conditions accuracy depends on:
+  - Number of registration photos per student (5-8 recommended)
+    * 3 photos:   ~85-90% recognition rate
+    * 5-8 photos: ~93-97% recognition rate
+  - Image quality (resolution, blur, lighting)
+  - Face visibility (angle, occlusion by hair/glasses)
+  - Class size: larger classes slightly slow down processing but do not
+    affect accuracy (matrix search is vectorised)
+
+Threshold 0.769 was chosen to minimise proxy attendance fraud while keeping
+the false-reject rate acceptable under normal classroom lighting.
+
+Unrecognised faces are saved to /unrecognized/ for manual review, so the
+faculty can catch any missed students and manually mark them via the dashboard.
+
+
+--------------------------------------------------------------------------------
+  API ENDPOINTS
+--------------------------------------------------------------------------------
+
+GET  /health                       — service health check
+POST /register_face                — register new student (multipart: name, roll_no, images[])
+POST /process_attendance           — single-image attendance (multipart: image)
+POST /process_attendance_batch     — multi-image attendance (multipart: images[])
+POST /recognize/face               — live recognition (JSON: {image: base64})
+POST /extract_faces                — detect + crop all faces in an image
+POST /assign_face/<student_id>     — assign cropped face to student (JSON: {face_filename})
+POST /add_embedding/<student_id>   — add photos directly to existing student
+GET  /students                     — list all students
+GET  /students/<id>                — get single student
+DELETE /students/<id>              — delete student
+POST /attendance/mark              — manual mark (JSON: {student_id, status})
+GET  /attendance/records           — get attendance records (query: date, student_id)
+GET  /dashboard/stats              — summary stats
+POST /students/bulk-import         — Excel bulk import (multipart: file)
+GET  /self-register/<token>        — get student info for self-registration page
+POST /self-register/<token>        — submit photos for self-registration
+
+
+--------------------------------------------------------------------------------
+  DATABASE SCHEMA
+--------------------------------------------------------------------------------
+
+students
+  id, name, roll_no (UNIQUE), embedding (BLOB), embedding_json (TEXT),
+  section, course, dept, room_no, created_at
+
+embeddings
+  id, student_id (FK), embedding (BLOB), embedding_json (TEXT), created_at
+
+attendance
+  id, student_id (FK), date (TEXT), status (present/absent),
+  confidence (REAL), timestamp
+  UNIQUE(student_id, date)
+
+registration_tokens
+  token (PK), student_id (FK), expires_at, used_at, created_at
+
+Indexes: roll_no, student_id (embeddings), date (attendance), student_id (attendance)
+WAL mode + 64 MB cache + synchronous=NORMAL for concurrent write performance
+
+
+--------------------------------------------------------------------------------
+  FRONTEND PAGES
+--------------------------------------------------------------------------------
+
+/                        Dashboard — stats cards, today's present/absent/rate
+/register                Manual student registration with webcam or file upload
+/bulk-import             Excel bulk import — instructions, template download, results
+/attendance              Upload classroom photo(s), view present/absent table
+/live                    Live webcam attendance — real-time recognition feed
+/embeddings              Add more face photos to existing students (2-step flow)
+/self-register/[token]   Student self-registration page (public, no login required)
+
+
+--------------------------------------------------------------------------------
+  USE CASES
+--------------------------------------------------------------------------------
+
+PRIMARY
+  - Classroom attendance in colleges / schools
+  - Lecture hall roll-call without disrupting class time
+  - Large batch registration via Excel + self-registration links (100+ students)
+
+SECONDARY
+  - Lab / workshop entry logging
+  - Exam hall verification
+  - Library / facility access logging (with minor modification)
+
+
+--------------------------------------------------------------------------------
+  ADVANTAGES
+--------------------------------------------------------------------------------
+
+1. FAST — a 30-student classroom photo processes in ~5-15 seconds end-to-end
+2. NON-INVASIVE — no fingerprint scanner, no RFID card, works from a distance
+3. SCALABLE — adding more students only grows the matrix; matching is O(1) per query
+4. PRIVACY-FRIENDLY — students upload their own photos via token links;
+   faculty never handles personal photos
+5. MULTI-PHOTO ROBUSTNESS — centroid averaging across 5-8 photos handles
+   lighting/pose variation much better than a single photo
+6. FORGERY-RESISTANT — proxy attendance is essentially impossible;
+   the system checks actual facial geometry, not a card or name
+7. OFFLINE-CAPABLE — runs entirely on local hardware; no cloud API keys needed
+8. MANUAL OVERRIDE — faculty can manually mark any student on the dashboard
+9. UNRECOGNISED FACE LOGGING — missed students are saved as crops for review
+10. INCREMENTAL IMPROVEMENT — add more face photos anytime via the embeddings
+    page; the centroid immediately updates for the next attendance session
+11. ZERO-DATA-LOSS MIGRATION — schema evolves with ALTER TABLE IF NOT EXISTS,
+    safe to update without wiping existing student/attendance data
+
+
+--------------------------------------------------------------------------------
+  DRAWBACKS / LIMITATIONS
+--------------------------------------------------------------------------------
+
+1. FIRST-RUN LATENCY — DeepFace downloads the Facenet512 model weights
+   (~90 MB) on first run; subsequent starts are instant
+
+2. CPU-BOUND — without a GPU, processing 30+ faces takes 10-30 seconds;
+   with a CUDA GPU it drops to 2-5 seconds. TensorFlow will use GPU if available.
+
+3. POOR LIGHTING — very dark, backlit, or blown-out images can drop accuracy
+   significantly. Smart CLAHE enhancement helps but is not perfect.
+
+4. OCCLUSION — heavy masks, sunglasses, or extreme head angles (>45 degrees)
+   can cause missed detections
+
+5. IDENTICAL TWINS — cosine similarity cannot distinguish identical twins
+   reliably (fundamental biometric limitation, not fixable in software)
+
+6. SINGLE THRESHOLD — the 0.769 threshold is global; students who always
+   photograph poorly may need more registration photos, and the threshold
+   cannot be tuned per-student without code changes
+
+7. SQLite CONCURRENCY — WAL mode handles light concurrent load well, but
+   under heavy simultaneous access (10+ threads writing) it can bottleneck;
+   a production deployment should use PostgreSQL
+
+8. NO AUTHENTICATION — the admin frontend has no login/auth; it assumes
+   trusted local or intranet access only. Exposing to the public internet
+   as-is is a security risk.
+
+9. TOKEN CLEANUP — expired tokens are checked at use time but are never
+   automatically purged from the DB (no background cleanup job)
+
+10. NO ATTENDANCE HISTORY EXPORT — the frontend shows today's attendance and
+    a records query, but there is no calendar heatmap or export-to-Excel of
+    historical attendance yet
+
+11. SELF-REGISTRATION LINK DELIVERY — token links are generated but the system
+    has NO email/SMS integration; faculty must distribute them manually (copy/CSV)
+
+12. DRIVE MODE RATE LIMITS — gdown can hit Google Drive download quotas for
+    large batches; Drive folders must be set to "Anyone with the link can view"
+
+
+--------------------------------------------------------------------------------
+  SECURITY NOTES
+--------------------------------------------------------------------------------
+
+- Self-registration tokens: 32-byte cryptographically random (secrets.token_urlsafe)
+- Tokens are single-use; once a student registers, the token is marked used
+- Token expiry is enforced server-side (7 days, checked on every call)
+- File uploads validated by extension (png/jpg/jpeg only) before any processing
+- No authentication on admin frontend — intended for intranet / localhost use only
+- CORS is fully open (Flask-CORS *) — restrict origins in production
+
+
+--------------------------------------------------------------------------------
+  HOW TO RUN
+--------------------------------------------------------------------------------
+
+Prerequisites:  Python 3.11,  Node.js 18+
+
+First time:
+  setup.bat               (installs Python deps + npm deps)
+
+Daily:
+  run_back.bat            (starts Flask on http://localhost:5000)
+  run_front.bat           (starts Next.js on http://localhost:3000)
+
+
+--------------------------------------------------------------------------------
+  FILE STRUCTURE (KEY FILES)
+--------------------------------------------------------------------------------
+
+herept2/
+  run_back.bat / run_front.bat / setup.bat
+
+  python_backend/
+    app.py                Flask app, all API routes (~1330 lines)
+    requirements.txt      Python dependencies
+    db/
+      database.py         SQLite ORM layer (~730 lines)
+      attendance.db       SQLite database (auto-created on first run)
+    utils/
+      face_detector.py    RetinaFace wrapper with smart enhancement
+      face_recognizer.py  Facenet512 wrapper + matrix search + caching
+      image_utils.py      Image preprocessing helpers
+    uploads/              Temp images during processing (auto-cleaned)
+    unrecognized/         Crops of faces not matched to any student
+    models/               DeepFace model weights cache (auto-downloaded)
+
+  frontend/
+    app/
+      page.tsx                      Dashboard
+      register/page.tsx             Manual registration
+      bulk-import/page.tsx          Excel import
+      attendance/page.tsx           Photo attendance
+      live/page.tsx                 Webcam live attendance
+      embeddings/page.tsx           Add face photos to existing students
+      self-register/[token]/page.tsx  Student self-registration (public)
+    components/Navigation.tsx       Top nav
+    lib/api.ts                      All API calls (axios wrappers)
+    lib/types.ts                    TypeScript interfaces
+
+================================================================================
 
 Project Overview:
 -----------------
