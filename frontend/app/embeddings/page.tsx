@@ -1,7 +1,9 @@
 ﻿'use client';
 
 import { useState, useRef, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { apiClient } from '@/lib/api';
+import { useAuth } from '@/lib/auth-context';
 import { Student, ExtractedFace } from '@/lib/types';
 import { Upload, ArrowLeft, CheckCircle, XCircle, Loader2, UserCheck, SkipForward } from 'lucide-react';
 
@@ -14,6 +16,27 @@ interface FaceState {
 }
 
 export default function AddEmbeddings() {
+  const router = useRouter();
+  const { isAuthenticated, isLoading } = useAuth();
+
+  // Redirect to login if not authenticated
+  useEffect(() => {
+    if (!isLoading && !isAuthenticated) {
+      router.push('/login');
+    }
+  }, [isAuthenticated, isLoading, router]);
+
+  if (!isAuthenticated || isLoading) {
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
   // shared
   const [students, setStudents] = useState<Student[]>([]);
 

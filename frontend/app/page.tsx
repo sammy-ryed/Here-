@@ -1,15 +1,26 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { apiClient } from '@/lib/api';
+import { useAuth } from '@/lib/auth-context';
 import { Student, DashboardStats } from '@/lib/types';
 import { Users, UserCheck, UserX, TrendingUp, Trash2 } from 'lucide-react';
 
 export default function Dashboard() {
+  const router = useRouter();
+  const { isAuthenticated, isLoading } = useAuth();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [students, setStudents] = useState<Student[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+
+  // Redirect to login if not authenticated
+  useEffect(() => {
+    if (!isLoading && !isAuthenticated) {
+      router.push('/login');
+    }
+  }, [isAuthenticated, isLoading, router]);
 
   const loadData = async () => {
     try {
@@ -56,10 +67,24 @@ export default function Dashboard() {
   };
 
   useEffect(() => {
-    loadData();
-    const interval = setInterval(loadData, 30000);
-    return () => clearInterval(interval);
-  }, []);
+    if (isAuthenticated) {
+      loadData();
+      const interval = setInterval(loadData, 30000);
+      return () => clearInterval(interval);
+    }
+  }, [isAuthenticated]);
+
+  // Show loading spinner while checking authentication
+  if (isLoading || !isAuthenticated) {
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (

@@ -167,7 +167,10 @@ export default function SelfRegisterPage() {
 
           <div className="bg-gray-50 border border-gray-200 p-4 space-y-1">
             <p className="text-base font-semibold text-gray-900">{info?.name}</p>
-            <p className="text-sm text-gray-600 font-mono">{info?.roll_no}</p>
+            <p className="text-sm text-gray-600 font-mono">Reg. No: {info?.roll_no}</p>
+            {info?.email && (
+              <p className="text-sm text-gray-600">{info.email}</p>
+            )}
             {(info?.course || info?.section) && (
               <p className="text-xs text-gray-500">
                 {[info.course, info.section, info.dept, info.room_no].filter(Boolean).join(' · ')}

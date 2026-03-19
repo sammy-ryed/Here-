@@ -6,10 +6,24 @@ export interface Student {
   course?: string;
   dept?: string;
   room_no?: string;
-  confidence?: number;         // live recognition confidence (current frame)
+  email?: string;
+  confidence?: number;
   attendance_confidence?: number; // stored confidence from last attendance mark
   attendance_status?: 'present' | 'absent' | 'N/A';
   last_attendance?: string;
+}
+
+export interface User {
+  user_id: number;
+  username: string;
+  role: 'admin' | 'teacher' | 'student';
+}
+
+export interface AuthResponse {
+  token: string;
+  username: string;
+  role: string;
+  user_id: number;
 }
 
 export interface BulkImportStudentResult {
@@ -26,6 +40,7 @@ export interface BulkImportTokenEntry {
   status: 'pending' | 'failed' | 'skipped';
   message: string;
   token?: string;
+  email?: string;
 }
 
 export interface BulkImportResult {
@@ -50,6 +65,7 @@ export interface SelfRegisterInfo {
   course?: string;
   dept?: string;
   room_no?: string;
+  email?: string;
   already_registered?: boolean;
 }
 
@@ -95,4 +111,47 @@ export interface AssignFaceResult {
 export interface ApiError {
   error: string;
   message?: string;
+}
+
+export interface Section {
+  id: number;
+  name: string;
+  year?: string;
+  department?: string;
+  batch?: string;
+}
+
+export interface Subject {
+  id: number;
+  name: string;
+  code: string;
+  section_id: number;
+}
+
+export interface TeacherSection {
+  teacher_id: number;
+  section_id: number;
+  teacher_name?: string;
+  section_name?: string;
+}
+
+export interface Session {
+  id: number;
+  teacher_id: number;
+  section_id: number;
+  subject_id: number;
+  status: 'open' | 'confirmed' | 'voided';
+  created_at: string;
+  confirmed_at?: string;
+  teacher_gps_lat?: number;
+  teacher_gps_lon?: number;
+}
+
+export interface AttendanceRecord {
+  id: number;
+  student_id: number;
+  date: string;
+  status: 'present' | 'absent';
+  confidence?: number;
+  timestamp: string;
 }

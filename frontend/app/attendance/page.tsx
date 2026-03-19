@@ -1,12 +1,16 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { apiClient } from '@/lib/api';
+import { useAuth } from '@/lib/auth-context';
 import { AttendanceResult } from '@/lib/types';
 import { Upload, Camera, CheckCircle, XCircle, AlertCircle, X } from 'lucide-react';
 import Webcam from 'react-webcam';
 
 export default function TakeAttendance() {
+  const router = useRouter();
+  const { isAuthenticated, isLoading } = useAuth();
   const [photos, setPhotos] = useState<File[]>([]);
   const [previews, setPreviews] = useState<string[]>([]);
   const [result, setResult] = useState<AttendanceResult | null>(null);
@@ -15,6 +19,24 @@ export default function TakeAttendance() {
   const [error, setError] = useState('');
   const webcamRef = useRef<Webcam>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Redirect to login if not authenticated
+  useEffect(() => {
+    if (!isLoading && !isAuthenticated) {
+      router.push('/login');
+    }
+  }, [isAuthenticated, isLoading, router]);
+
+  if (!isAuthenticated || isLoading) {
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);

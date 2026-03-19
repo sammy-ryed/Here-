@@ -1,12 +1,16 @@
 'use client';
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import * as XLSX from 'xlsx';
 import { apiClient } from '@/lib/api';
+import { useAuth } from '@/lib/auth-context';
 import { BulkImportResult, BulkImportTokenEntry, BulkImportStudentResult } from '@/lib/types';
 import { Upload, FileSpreadsheet, CheckCircle, XCircle, AlertCircle, Copy, Download, ChevronDown, ChevronUp, Clock } from 'lucide-react';
 
 export default function BulkImport() {
+  const router = useRouter();
+  const { isAuthenticated, isLoading } = useAuth();
   const [file, setFile] = useState<File | null>(null);
   const [result, setResult] = useState<BulkImportResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -15,9 +19,28 @@ export default function BulkImport() {
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const selfRegBaseUrl = typeof window !== 'undefined'
-    ? `${window.location.origin}/self-register`
-    : '/self-register';
+  // Redirect to login if not authenticated
+  useEffect(() => {
+    if (!isLoading && !isAuthenticated) {
+      router.push('/login');
+    }
+  }, [isAuthenticated, isLoading, router]);
+
+  if (!isAuthenticated || isLoading) {
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  const getSelfRegBaseUrl = () =>
+    typeof window !== 'undefined'
+      ? `${window.location.origin}/self-register`
+      : '/self-register';
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
@@ -41,16 +64,18 @@ export default function BulkImport() {
   };
 
   const copyLink = useCallback((token: string) => {
-    navigator.clipboard.writeText(`${selfRegBaseUrl}/${token}`);
+    const baseUrl = getSelfRegBaseUrl();
+    navigator.clipboard.writeText(`${baseUrl}/${token}`);
     setCopiedToken(token);
     setTimeout(() => setCopiedToken(null), 2000);
-  }, [selfRegBaseUrl]);
+  }, []);
 
   const downloadLinksCSV = () => {
     if (!result?.tokens) return;
-    const header = 'Name,Roll No,Registration Link,Status';
+    const baseUrl = getSelfRegBaseUrl();
+    const header = 'Name,Registration Number,Registration Link,Status';
     const rows = result.tokens.map(t =>
-      `"${t.name}","${t.roll_no}","${t.token ? `${selfRegBaseUrl}/${t.token}` : ''}","${t.status}"`
+      `"${t.name}","${t.roll_no}","${t.token ? `${baseUrl}/${t.token}` : ''}","${t.status}"`
     );
     const csv = [header, ...rows].join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
@@ -61,10 +86,10 @@ export default function BulkImport() {
   };
 
   const downloadTemplate = () => {
-    const headers = ['Name', 'Roll No', 'Section', 'Course', 'Department', 'Room No'];
+    const headers = ['Name', 'Registration Number', 'SRM Email ID', 'Section', 'Course', 'Department', 'Room No'];
     const ws = XLSX.utils.aoa_to_sheet([headers]);
     // Column widths
-    ws['!cols'] = [22, 14, 10, 18, 22, 10].map(w => ({ wch: w }));
+    ws['!cols'] = [22, 22, 30, 10, 18, 22, 10].map(w => ({ wch: w }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Students');
     XLSX.writeFile(wb, 'students_template.xlsx');
@@ -131,12 +156,14 @@ export default function BulkImport() {
                   </thead>
                   <tbody className="divide-y divide-gray-100 text-xs">
                     {[
-                      ['Name',       true,  'Rahul Sharma'],
-                      ['Roll No',    true,  'CS2024001'],
-                      ['Section',    false, 'A'],
-                      ['Course',     false, 'B.Tech CSE'],
-                      ['Department', false, 'Computer Science'],
-                      ['Room No',    false, '301'],
+                      ['Name',                true,  'Rahul Sharma'],
+                      ['Registration Number', true,  'RA2411003010001'],
+                      ['SRM Email ID',        true,  'ra2411003010001@srmist.edu.in'],
+                      ['Section',             false, 'A'],
+                      ['Course',              false, 'B.Tech CSE'],
+                      ['Department',          false, 'Computer Science'],
+                      ['Room No',             false, '301'],
+                      ['Drive Link',          false, 'https://drive.google.com/drive/folders/…'],
                     ].map(([col, req, ex]) => (
                       <tr key={String(col)}>
                         <td className="px-4 py-2 font-mono text-gray-800">{String(col)}</td>
@@ -263,7 +290,7 @@ export default function BulkImport() {
               <thead>
                 <tr className="bg-gray-50 border-y border-gray-200">
                   <th className="text-left px-4 py-2.5 font-semibold text-gray-700">Name</th>
-                  <th className="text-left px-4 py-2.5 font-semibold text-gray-700">Roll No</th>
+                  <th className="text-left px-4 py-2.5 font-semibold text-gray-700">Reg. No</th>
                   <th className="text-left px-4 py-2.5 font-semibold text-gray-700">Registration Link</th>
                   <th className="text-left px-4 py-2.5 font-semibold text-gray-700">Status</th>
                 </tr>
@@ -277,7 +304,7 @@ export default function BulkImport() {
                       {t.token ? (
                         <div className="flex items-center space-x-2">
                           <span className="font-mono text-xs text-gray-500 truncate max-w-xs">
-                            {selfRegBaseUrl}/{t.token.slice(0, 16)}…
+                            {getSelfRegBaseUrl()}/{t.token.slice(0, 16)}…
                           </span>
                           <button
                             onClick={() => copyLink(t.token!)}
@@ -330,7 +357,7 @@ export default function BulkImport() {
               <thead>
                 <tr className="bg-gray-50 border-y border-gray-200">
                   <th className="text-left px-4 py-2.5 font-semibold text-gray-700">Name</th>
-                  <th className="text-left px-4 py-2.5 font-semibold text-gray-700">Roll No</th>
+                  <th className="text-left px-4 py-2.5 font-semibold text-gray-700">Reg. No</th>
                   <th className="text-left px-4 py-2.5 font-semibold text-gray-700">Status</th>
                   <th className="text-left px-4 py-2.5 font-semibold text-gray-700">Details</th>
                 </tr>

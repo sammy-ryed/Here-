@@ -1,23 +1,30 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import { LayoutDashboard, UserPlus, Camera, Video, FileImage, FileSpreadsheet } from 'lucide-react';
+import { usePathname, useRouter } from 'next/navigation';
+import { LayoutDashboard, UserPlus, Camera, FileImage, FileSpreadsheet, LogOut } from 'lucide-react';
+import { useAuth } from '@/lib/auth-context';
 
 export default function Navigation() {
   const pathname = usePathname();
+  const router = useRouter();
+  const { user, isAuthenticated, logout } = useAuth();
 
   // Self-register pages are student-facing — hide the nav bar
-  if (pathname.startsWith('/self-register')) return null;
+  if (pathname.startsWith('/self-register') || pathname === '/login') return null;
 
   const navItems = [
     { href: '/',             label: 'Dashboard',   icon: LayoutDashboard },
     { href: '/register',     label: 'Register',    icon: UserPlus },
     { href: '/bulk-import',  label: 'Bulk Import', icon: FileSpreadsheet },
     { href: '/attendance',   label: 'Attendance',  icon: Camera },
-    { href: '/live',         label: 'Live',        icon: Video },
     { href: '/embeddings',   label: 'Embeddings',  icon: FileImage },
   ];
+
+  const handleLogout = () => {
+    logout();
+    router.push('/login');
+  };
 
   return (
     <nav className="bg-white border-b border-gray-200">
@@ -29,7 +36,7 @@ export default function Navigation() {
             </div>
             <div>
               <h1 className="text-lg font-semibold text-gray-900">Here!</h1>
-              <p className="text-xs text-gray-500">proxy kya hota hai?!</p>
+              <p className="text-xs text-gray-500">Face Recognition Attendance</p>
             </div>
           </div>
           <div className="flex items-center space-x-1">
@@ -51,6 +58,24 @@ export default function Navigation() {
                 </Link>
               );
             })}
+          </div>
+          <div className="flex items-center space-x-4">
+            {isAuthenticated && user && (
+              <>
+                <div className="text-right hidden sm:block">
+                  <p className="text-sm font-medium text-gray-900">{user.username}</p>
+                  <p className="text-xs text-gray-500 uppercase">{user.role}</p>
+                </div>
+                <button
+                  onClick={handleLogout}
+                  className="flex items-center space-x-2 px-3 py-2 text-sm font-medium text-gray-600 hover:text-red-600 transition-colors"
+                  title="Logout"
+                >
+                  <LogOut size={18} />
+                  <span className="hidden sm:inline">Logout</span>
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>

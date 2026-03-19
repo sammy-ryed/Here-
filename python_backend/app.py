@@ -4,7 +4,7 @@ Handles face registration and attendance processing using RetinaFace and ArcFace
 OPTIMIZED: GPU support + Batch processing + Threading + Caching
 """
 
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify, send_file, g
 from flask_cors import CORS
 import os
 import numpy as np
@@ -20,7 +20,13 @@ import threading
 
 from utils.face_detector import FaceDetector
 from utils.face_recognizer import FaceRecognizer
+from utils.email_service import EmailService
 from db.database import Database
+from db.auth_db import AuthDB
+from db.sections_db import SectionsDB
+from auth.decorators import require_auth, require_role
+import bcrypt
+from auth.jwt_utils import generate_token
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -30,7 +36,7 @@ CORS(app)
 UPLOAD_FOLDER = 'uploads'
 UNRECOGNIZED_FOLDER = 'unrecognized'
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg'}
-CONFIDENCE_THRESHOLD = 0.769  # Cosine similarity threshold
+CONFIDENCE_THRESHOLD = 0.69  # Cosine similarity threshold
 
 # Create necessary folders
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -43,7 +49,20 @@ logger = logging.getLogger(__name__)
 # Initialize components
 face_detector = FaceDetector()
 face_recognizer = FaceRecognizer()
+email_service = EmailService()
 database = Database()
+auth_db = AuthDB()
+sections_db = SectionsDB()
+
+# Test email service on startup
+if email_service.sender_password:
+    logger.info("Testing email service configuration...")
+    if email_service.test_connection():
+        logger.info("✅ Email service is properly configured and ready to send")
+    else:
+        logger.warning("⚠️ Email service configuration has issues - check logs above")
+else:
+    logger.warning("⚠️ EMAIL_PASSWORD not configured - email notifications will not work")
 
 # Thread pool for parallel processing (2 workers to avoid overwhelming DeepFace)
 # Note: DeepFace has threading issues, so we limit to 2 concurrent workers
@@ -172,6 +191,7 @@ def health_check():
     })
 
 @app.route('/register_face', methods=['POST'])
+@require_auth
 def register_face():
     """
     Register a new student with face images
@@ -182,9 +202,10 @@ def register_face():
         # Get form data
         name = request.form.get('name')
         roll_no = request.form.get('roll_no')
+        email = request.form.get('email')
         
-        if not name or not roll_no:
-            return jsonify({'error': 'Name and roll number are required'}), 400
+        if not name or not roll_no or not email:
+            return jsonify({'error': 'Name, registration number, and SRM email are required'}), 400
         
         # Get uploaded images
         images = request.files.getlist('images')
@@ -224,7 +245,7 @@ def register_face():
         avg_embedding = np.mean(all_embeddings, axis=0)
         
         # Store in database
-        student_id = database.add_student(name, roll_no, avg_embedding)
+        student_id = database.add_student(name, roll_no, avg_embedding, email=email)
         
         # Store individual embeddings as well for better matching
         for embedding in all_embeddings:
@@ -249,6 +270,7 @@ def register_face():
         return jsonify({'error': f'Registration failed: {str(e)}'}), 500
 
 @app.route('/process_attendance', methods=['POST'])
+@require_auth
 def process_attendance():
     """
     Process attendance from classroom photo
@@ -381,6 +403,7 @@ def process_attendance():
         return jsonify({'error': f'Attendance processing failed: {str(e)}'}), 500
 
 @app.route('/process_attendance_batch', methods=['POST'])
+@require_auth
 def process_attendance_batch():
     """
     Process attendance from multiple classroom photos
@@ -501,6 +524,7 @@ def process_attendance_batch():
         return jsonify({'error': f'Batch attendance processing failed: {str(e)}'}), 500
 
 @app.route('/unrecognized/<filename>', methods=['GET'])
+@require_auth
 def get_unrecognized_face(filename):
     """Serve unrecognized face image"""
     try:
@@ -514,6 +538,7 @@ def get_unrecognized_face(filename):
         return jsonify({'error': str(e)}), 500
 
 @app.route('/students', methods=['GET'])
+@require_auth
 def get_all_students():
     """Get all registered students with full profile fields"""
     try:
@@ -527,6 +552,7 @@ def get_all_students():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/attendance/report', methods=['GET'])
+@require_auth
 def get_attendance_report():
     """Get attendance report for a specific date or date range"""
     try:
@@ -545,6 +571,7 @@ def get_attendance_report():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/dashboard/stats', methods=['GET'])
+@require_auth
 def get_dashboard_stats():
     """Get dashboard statistics including today's attendance"""
     try:
@@ -602,6 +629,7 @@ def get_dashboard_stats():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/students/bulk-import', methods=['POST'])
+@require_auth
 def bulk_import_students():
     """
     Bulk-import students from an Excel file.
@@ -638,11 +666,12 @@ def bulk_import_students():
         col_map = {}
         ALIASES = {
             'name':       ('name', 'student name', 'full name', 'student_name'),
-            'roll_no':    ('roll no', 'roll_no', 'roll number', 'rollno', 'roll'),
+            'roll_no':    ('roll no', 'roll_no', 'roll number', 'rollno', 'roll', 'registration number', 'registration no', 'reg no', 'reg_no'),
             'section':    ('section',),
             'course':     ('course', 'programme', 'program'),
             'dept':       ('department', 'dept'),
             'room_no':    ('room no', 'room_no', 'room', 'room number'),
+            'email':      ('email', 'srm email', 'srm email id', 'email id', 'email address'),
             'drive_link': ('drive link', 'drive_link', 'photos link', 'link', 'photo link', 'photos', 'folder link'),
         }
         for key, aliases in ALIASES.items():
@@ -676,6 +705,7 @@ def bulk_import_students():
                 course  = cell('course') or None
                 dept    = cell('dept') or None
                 room_no = cell('room_no') or None
+                email   = cell('email') or None
 
                 if not name or not roll_no:
                     tokens.append({'roll_no': roll_no or f'row_{row_idx}', 'name': name,
@@ -690,13 +720,30 @@ def bulk_import_students():
 
                 try:
                     student_id = database.add_pending_student(
-                        name, roll_no, section=section, course=course, dept=dept, room_no=room_no
+                        name, roll_no, section=section, course=course, dept=dept, room_no=room_no, email=email
                     )
+                    # Auto-assign section_id by matching section name (case-insensitive)
+                    if section:
+                        _sec = sections_db.get_section_by_name(section)
+                        if _sec:
+                            sections_db.update_student_section(student_id, _sec['id'])
                     token = database.create_registration_token(student_id, expires_days=7)
+                    
+                    # Send registration email if email is provided
+                    email_sent = False
+                    if email:
+                        try:
+                            email_service.send_registration_token(email, name, token)
+                            email_sent = True
+                            logger.info(f"[bulk-import] 📧 Email sent to {name} ({email})")
+                        except Exception as e:
+                            logger.warning(f"[bulk-import] Failed to send email to {email}: {e}")
+                    
                     tokens.append({
                         'roll_no': roll_no, 'name': name,
                         'status': 'pending', 'token': token,
-                        'message': 'Awaiting student self-registration'
+                        'email_sent': email_sent,
+                        'message': f"Token created. {'Email sent to ' + email if email_sent else 'No email provided'}"
                     })
                     logger.info(f"[bulk-import] Created token for {name} ({roll_no})")
                 except ValueError as e:
@@ -744,6 +791,7 @@ def bulk_import_students():
             course     = cell('course') or None
             dept       = cell('dept') or None
             room_no    = cell('room_no') or None
+            email      = cell('email') or None
 
             if not name or not roll_no:
                 results.append({'roll_no': roll_no or f'row_{row_idx}', 'name': name,
@@ -758,13 +806,30 @@ def bulk_import_students():
                     continue
                 try:
                     student_id = database.add_pending_student(
-                        name, roll_no, section=section, course=course, dept=dept, room_no=room_no
+                        name, roll_no, section=section, course=course, dept=dept, room_no=room_no, email=email
                     )
+                    # Auto-assign section_id by matching section name (case-insensitive)
+                    if section:
+                        _sec = sections_db.get_section_by_name(section)
+                        if _sec:
+                            sections_db.update_student_section(student_id, _sec['id'])
                     token = database.create_registration_token(student_id, expires_days=7)
+                    
+                    # Send registration email if email is provided
+                    email_sent = False
+                    if email:
+                        try:
+                            email_service.send_registration_token(email, name, token)
+                            email_sent = True
+                            logger.info(f"[bulk-import] 📧 Email sent to {name} ({email})")
+                        except Exception as e:
+                            logger.warning(f"[bulk-import] Failed to send email to {email}: {e}")
+                    
                     token_results.append({
                         'roll_no': roll_no, 'name': name,
                         'status': 'pending', 'token': token,
-                        'message': 'No drive link — awaiting self-registration'
+                        'email_sent': email_sent,
+                        'message': f"Token created. {'Email sent to ' + email if email_sent else 'No email provided'}"
                     })
                     logger.info(f"[bulk-import] No drive link for {name} ({roll_no}), generated token")
                 except ValueError as e:
@@ -830,6 +895,11 @@ def bulk_import_students():
                         name, roll_no, avg_embedding,
                         section=section, course=course, dept=dept, room_no=room_no
                     )
+                    # Auto-assign section_id by matching section name (case-insensitive)
+                    if section:
+                        _sec = sections_db.get_section_by_name(section)
+                        if _sec:
+                            sections_db.update_student_section(student_id, _sec['id'])
                     for emb in all_embeddings:
                         database.add_embedding(student_id, emb)
                     results.append({
@@ -880,7 +950,9 @@ def self_register_get(token):
     if info['used_at']:
         return jsonify({'error': 'This registration link has already been used'}), 410
     from datetime import datetime as dt
-    if dt.fromisoformat(info['expires_at']) < dt.now():
+    # expires_at may be datetime object (from DB) or string
+    expires_at = info['expires_at'] if isinstance(info['expires_at'], dt) else dt.fromisoformat(info['expires_at'])
+    if expires_at < dt.now():
         return jsonify({'error': 'This registration link has expired. Please contact faculty.'}), 410
     return jsonify({
         'valid': True,
@@ -903,7 +975,9 @@ def self_register_post(token):
     if info['used_at']:
         return jsonify({'error': 'This registration link has already been used'}), 410
     from datetime import datetime as dt
-    if dt.fromisoformat(info['expires_at']) < dt.now():
+    # expires_at may be datetime object (from DB) or string
+    expires_at = info['expires_at'] if isinstance(info['expires_at'], dt) else dt.fromisoformat(info['expires_at'])
+    if expires_at < dt.now():
         return jsonify({'error': 'Registration link expired'}), 410
 
     images = request.files.getlist('images')
@@ -921,16 +995,24 @@ def self_register_post(token):
         if not image_file or not allowed_file(image_file.filename):
             failed_images += 1
             continue
-        filename = f"selfreg_{roll_no}_{idx}_{datetime.now().strftime('%Y%m%d%H%M%S%f')}.jpg"
-        filepath = save_image(image_file, filename)
         try:
-            faces = face_detector.detect_faces(filepath)
+            # Read image into memory without saving to disk
+            image_file.seek(0)  # Reset file pointer
+            img_array = cv2.imdecode(np.frombuffer(image_file.read(), np.uint8), cv2.IMREAD_COLOR)
+            
+            if img_array is None:
+                failed_images += 1
+                logger.warning(f"[self-register] {name} image {idx}: could not decode image")
+                continue
+            
+            # Process image in memory
+            faces = face_detector.detect_faces(img_array)
             if not faces:
                 failed_images += 1
                 logger.warning(f"[self-register] {name} image {idx}: no face detected")
                 continue
             largest = max(faces, key=lambda f: (f['bbox'][2] - f['bbox'][0]) * (f['bbox'][3] - f['bbox'][1]))
-            emb = face_recognizer.get_embedding(filepath, largest)
+            emb = face_recognizer.get_embedding(img_array, largest)
             if emb is not None:
                 all_embeddings.append(emb)
             else:
@@ -938,9 +1020,6 @@ def self_register_post(token):
         except Exception as e:
             failed_images += 1
             logger.warning(f"[self-register] {name} image {idx} error: {e}")
-        finally:
-            if os.path.exists(filepath):
-                os.remove(filepath)
 
     if not all_embeddings:
         return jsonify({'error': 'No face could be detected in your photos. Please try with clearer, well-lit photos.'}), 400
@@ -962,6 +1041,7 @@ def self_register_post(token):
 
 
 @app.route('/students/<int:student_id>', methods=['DELETE'])
+@require_auth
 def delete_student(student_id):
     """Delete a student and their embeddings"""
     try:
@@ -975,6 +1055,7 @@ def delete_student(student_id):
         return jsonify({'error': str(e)}), 500
 
 @app.route('/attendance/clear-today', methods=['POST'])
+@require_auth
 def clear_today_attendance():
     """Clear all attendance records for today"""
     try:
@@ -996,6 +1077,8 @@ def clear_today_attendance():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/students/clear-all', methods=['DELETE'])
+@require_auth
+@require_role('admin')
 def clear_all_students():
     """Delete ALL students and their embeddings - DESTRUCTIVE!"""
     try:
@@ -1015,6 +1098,7 @@ def clear_all_students():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/recognize/face', methods=['POST'])
+@require_auth
 def recognize_face():
     """
     OPTIMIZED: Recognize a single face from base64 image data - FAST VERSION
@@ -1109,6 +1193,7 @@ def recognize_face():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/attendance/mark', methods=['POST'])
+@require_auth
 def mark_attendance():
     """
     Manually mark a student's attendance (present or absent)
@@ -1154,6 +1239,7 @@ def mark_attendance():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/extract_faces', methods=['POST'])
+@require_auth
 def extract_faces():
     """
     Extract all faces from a photo and return them as base64 images
@@ -1240,6 +1326,7 @@ def extract_faces():
         return jsonify({'error': f'Face extraction failed: {str(e)}'}), 500
 
 @app.route('/add_embedding/<int:student_id>', methods=['POST'])
+@require_auth
 def add_embedding_to_student(student_id):
     """
     Add new face embeddings to an existing student.
@@ -1310,6 +1397,7 @@ def add_embedding_to_student(student_id):
         return jsonify({'error': f'Failed to add embedding: {str(e)}'}), 500
 
 @app.route('/assign_face/<int:student_id>', methods=['POST'])
+@require_auth
 def assign_face_to_student(student_id):
     """
     Assign an already-extracted face crop (from /extract_faces) to a student.
@@ -1367,7 +1455,473 @@ def assign_face_to_student(student_id):
         return jsonify({'error': f'Failed to assign face: {str(e)}'}), 500
 
 
+
+# ── AUTH ENDPOINTS ─────────────────────────────────────────────────────────────
+
+@app.route('/auth/login', methods=['POST'])
+def auth_login():
+    """
+    Authenticate a user and return a JWT.
+    Request JSON: { "username": "...", "password": "..." }
+    Response:     { "token": "...", "role": "...", "username": "...", "user_id": int }
+    """
+    try:
+        data = request.get_json()
+        if not data or 'username' not in data or 'password' not in data:
+            return jsonify({'error': 'username and password are required'}), 400
+        username = data['username'].strip()
+        password = data['password']
+        user = auth_db.get_user_by_username(username)
+        if not user:
+            return jsonify({'error': 'Invalid credentials'}), 401
+        if not bcrypt.checkpw(password.encode('utf-8'), user['password_hash'].encode('utf-8')):
+            return jsonify({'error': 'Invalid credentials'}), 401
+        token = generate_token(user['id'], user['username'], user['role'])
+        logger.info(f"✅ Login: {username} (role={user['role']})")
+        return jsonify({
+            'token': token,
+            'username': user['username'],
+            'role': user['role'],
+            'user_id': user['id'],
+        })
+    except Exception as e:
+        logger.error(f"Login error: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/auth/logout', methods=['POST'])
+@require_auth
+def auth_logout():
+    """
+    Acknowledge logout (stateless — client must discard token).
+    Token cannot be server-side invalidated before expiry without a blacklist table.
+    """
+    logger.info(f"Logout: {g.current_user['username']}")
+    return jsonify({'success': True, 'message': 'Logged out. Please discard your token.'})
+
+
+# ── SECTION ENDPOINTS ──────────────────────────────────────────────────────────
+
+@app.route('/sections', methods=['POST'])
+@require_auth
+@require_role('admin')
+def create_section():
+    """Create a new section. Admin only.
+    Body: { name, year?, department?, batch? }"""
+    try:
+        data = request.get_json()
+        if not data or 'name' not in data:
+            return jsonify({'error': 'name is required'}), 400
+        section_id = sections_db.create_section(
+            name=data['name'],
+            year=data.get('year'),
+            department=data.get('department'),
+            batch=data.get('batch'),
+        )
+        return jsonify({'success': True, 'section_id': section_id, 'name': data['name']}), 201
+    except Exception as e:
+        logger.error(f"create_section error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/sections', methods=['GET'])
+@require_auth
+def get_sections():
+    """List all sections."""
+    try:
+        sections = sections_db.get_all_sections()
+        return jsonify({'sections': sections, 'total': len(sections)})
+    except Exception as e:
+        logger.error(f"get_sections error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+# ── SUBJECT ENDPOINTS ──────────────────────────────────────────────────────────
+
+@app.route('/subjects', methods=['POST'])
+@require_auth
+@require_role('admin')
+def create_subject():
+    """Create a subject inside a section. Admin only.
+    Body: { name, code, section_id }"""
+    try:
+        data = request.get_json()
+        for field in ('name', 'code', 'section_id'):
+            if not data or field not in data:
+                return jsonify({'error': f'{field} is required'}), 400
+        subject_id = sections_db.create_subject(
+            name=data['name'], code=data['code'], section_id=int(data['section_id'])
+        )
+        return jsonify({'success': True, 'subject_id': subject_id}), 201
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 404
+    except Exception as e:
+        logger.error(f"create_subject error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/sections/<int:section_id>/subjects', methods=['GET'])
+@require_auth
+def get_subjects(section_id):
+    """List all subjects for a section."""
+    try:
+        subjects = sections_db.get_subjects_by_section(section_id)
+        return jsonify({'subjects': subjects, 'section_id': section_id, 'total': len(subjects)})
+    except Exception as e:
+        logger.error(f"get_subjects error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+# ── TEACHER ↔ SECTION ENDPOINTS ────────────────────────────────────────────────
+
+@app.route('/teacher-sections', methods=['POST'])
+@require_auth
+@require_role('admin')
+def assign_teacher_section():
+    """Assign a teacher to a section. Admin only.
+    Body: { teacher_id, section_id }"""
+    try:
+        data = request.get_json()
+        for field in ('teacher_id', 'section_id'):
+            if not data or field not in data:
+                return jsonify({'error': f'{field} is required'}), 400
+        sections_db.assign_teacher_section(
+            teacher_id=int(data['teacher_id']), section_id=int(data['section_id'])
+        )
+        return jsonify({
+            'success': True,
+            'teacher_id': data['teacher_id'],
+            'section_id': data['section_id'],
+        }), 201
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 404
+    except Exception as e:
+        logger.error(f"assign_teacher_section error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/teacher-sections', methods=['GET'])
+@require_auth
+def get_teacher_sections():
+    """List teacher-section assignments.
+    Admin sees all; teacher sees only their own assignments."""
+    try:
+        user = g.current_user
+        teacher_id = user['user_id'] if user['role'] == 'teacher' else None
+        results = sections_db.get_teacher_sections(teacher_id=teacher_id)
+        return jsonify({'teacher_sections': results, 'total': len(results)})
+    except Exception as e:
+        logger.error(f"get_teacher_sections error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+# ── SESSION ENDPOINTS ──────────────────────────────────────────────────────────
+
+@app.route('/sessions', methods=['POST'])
+@require_auth
+def create_session():
+    """Create an attendance session. teacher_id inferred from JWT.
+    Body: { section_id, subject_id, teacher_gps_lat?, teacher_gps_lon? }"""
+    try:
+        data = request.get_json()
+        for field in ('section_id', 'subject_id'):
+            if not data or field not in data:
+                return jsonify({'error': f'{field} is required'}), 400
+        teacher_id = g.current_user['user_id']
+        gps_lat = data.get('teacher_gps_lat')
+        gps_lon = data.get('teacher_gps_lon')
+        session_id = sections_db.create_session(
+            teacher_id=teacher_id,
+            section_id=int(data['section_id']),
+            subject_id=int(data['subject_id']),
+            gps_lat=float(gps_lat) if gps_lat is not None else None,
+            gps_lon=float(gps_lon) if gps_lon is not None else None,
+        )
+        return jsonify({'success': True, 'session_id': session_id, 'status': 'open'}), 201
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 404
+    except Exception as e:
+        logger.error(f"create_session error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/sessions', methods=['GET'])
+@require_auth
+def get_sessions():
+    """List sessions. Admin sees all; teacher sees only their own."""
+    try:
+        user = g.current_user
+        teacher_id = user['user_id'] if user['role'] == 'teacher' else None
+        sess_list = sections_db.get_sessions(teacher_id=teacher_id)
+        return jsonify({'sessions': sess_list, 'total': len(sess_list)})
+    except Exception as e:
+        logger.error(f"get_sessions error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/sessions/<int:session_id>/confirm', methods=['PUT'])
+@require_auth
+def confirm_session(session_id):
+    """Confirm an open session (sets confirmed_at, status=confirmed)."""
+    try:
+        ok = sections_db.confirm_session(session_id)
+        if ok:
+            return jsonify({'success': True, 'session_id': session_id, 'status': 'confirmed'})
+        return jsonify({'error': 'Session not found or not open'}), 404
+    except Exception as e:
+        logger.error(f"confirm_session error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/sessions/<int:session_id>/void', methods=['PUT'])
+@require_auth
+@require_role('admin')
+def void_session(session_id):
+    """Void a session. Admin only."""
+    try:
+        ok = sections_db.void_session(session_id)
+        if ok:
+            return jsonify({'success': True, 'session_id': session_id, 'status': 'voided'})
+        return jsonify({'error': 'Session not found or already voided'}), 404
+    except Exception as e:
+        logger.error(f"void_session error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+# ── STUDENT → SECTION ASSIGNMENT ──────────────────────────────────────────────
+
+@app.route('/students/<int:student_id>/section', methods=['PUT'])
+@require_auth
+def update_student_section(student_id):
+    """Assign a student to a section.
+    Body: { "section_id": int }
+    Auth: teacher or admin."""
+    try:
+        data = request.get_json()
+        if not data or 'section_id' not in data:
+            return jsonify({'error': 'section_id is required'}), 400
+        ok = sections_db.update_student_section(student_id, int(data['section_id']))
+        if not ok:
+            return jsonify({'error': f'Student {student_id} not found'}), 404
+        # Invalidate cached student data
+        database.get_all_students_cached.cache_clear()
+        database.get_student_by_id_cached.cache_clear()
+        return jsonify({
+            'success': True,
+            'student_id': student_id,
+            'section_id': data['section_id'],
+        })
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 404
+    except Exception as e:
+        logger.error(f"update_student_section error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+# ── EMAIL ENDPOINTS - Send registration tokens to students ──────────────────────
+
+@app.route('/email/test', methods=['POST'])
+@require_auth
+@require_role('admin')
+def test_email():
+    """
+    Test email sending with a test email.
+    Body: { "test_email": "someone@example.com" }
+    Admin only.
+    """
+    try:
+        data = request.get_json()
+        test_email_addr = data.get('test_email')
+        
+        if not test_email_addr:
+            return jsonify({'error': 'test_email is required'}), 400
+        
+        logger.info(f"⚡ Testing email send to {test_email_addr}...")
+        
+        success = email_service.send_registration_token(
+            student_email=test_email_addr,
+            student_name='Test User',
+            token='test-token-12345',
+            deployment_url=os.environ.get('DEPLOYMENT_URL', 'http://localhost:3000')
+        )
+        
+        if success:
+            return jsonify({
+                'success': True,
+                'message': f'Test email sent to {test_email_addr}',
+                'recipient': test_email_addr
+            })
+        else:
+            return jsonify({
+                'error': 'Failed to send test email - check application logs for details',
+                'recipient': test_email_addr
+            }), 500
+            
+    except Exception as e:
+        logger.error(f"test_email error: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/email/send-registration-token', methods=['POST'])
+@require_auth
+@require_role('admin')
+def send_registration_token():
+    """
+    Send a registration token to a single student.
+    Body: { "student_id": int, "email": str }
+    Admin only.
+    """
+    try:
+        data = request.get_json()
+        student_id = data.get('student_id')
+        email = data.get('email')
+
+        if not student_id or not email:
+            return jsonify({'error': 'student_id and email are required'}), 400
+
+        # Get student info
+        student = database.get_student_by_id_cached(student_id)
+        if not student:
+            return jsonify({'error': f'Student {student_id} not found'}), 404
+
+        # Check if student already has a pending token
+        token_info = database.get_registration_token_by_student(student_id)
+        if token_info:
+            token = token_info['token']
+            logger.info(f"Using existing token for student {student_id}")
+        else:
+            # Create a new token
+            token = database.create_registration_token(student_id, expires_days=7)
+            logger.info(f"Created new token for student {student_id}")
+
+        # Get deployment URL from env or request
+        deployment_url = os.environ.get('DEPLOYMENT_URL', 'http://localhost:3000')
+
+        # Send email
+        success = email_service.send_registration_token(
+            student_email=email,
+            student_name=student['name'],
+            token=token,
+            deployment_url=deployment_url
+        )
+
+        if success:
+            return jsonify({
+                'success': True,
+                'message': f'Registration email sent to {email}',
+                'student_id': student_id,
+                'email': email
+            })
+        else:
+            return jsonify({
+                'error': 'Failed to send email. Check email configuration.',
+                'student_id': student_id
+            }), 500
+
+    except Exception as e:
+        logger.error(f"send_registration_token error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/email/send-bulk-tokens', methods=['POST'])
+@require_auth
+@require_role('admin')
+def send_bulk_tokens():
+    """
+    Send registration tokens to multiple students.
+    Body: { "student_ids": [int], "email_column": str }
+    Admin only.
+    """
+    try:
+        data = request.get_json()
+        student_ids = data.get('student_ids', [])
+
+        if not student_ids:
+            return jsonify({'error': 'student_ids is required'}), 400
+
+        # Prepare student data for email sending
+        students_to_email = []
+        deployment_url = os.environ.get('DEPLOYMENT_URL', 'http://localhost:3000')
+
+        for student_id in student_ids:
+            student = database.get_student_by_id_cached(student_id)
+            if not student:
+                logger.warning(f"Student {student_id} not found, skipping")
+                continue
+
+            # Get or create token
+            token_info = database.get_registration_token_by_student(student_id)
+            if token_info:
+                token = token_info['token']
+            else:
+                token = database.create_registration_token(student_id, expires_days=7)
+
+            # Collect for bulk send
+            students_to_email.append({
+                'name': student['name'],
+                'email': student.get('email', ''),  # Assuming email column exists
+                'token': token
+            })
+
+        if not students_to_email:
+            return jsonify({'error': 'No valid students found'}), 400
+
+        # Send emails in bulk
+        result = email_service.send_bulk_registration_emails(
+            students=students_to_email,
+            deployment_url=deployment_url
+        )
+
+        return jsonify({
+            'success': True,
+            'message': f'Emails sent to {result["sent"]} students',
+            'sent': result['sent'],
+            'failed': result['failed'],
+            'failed_emails': result['failed_emails']
+        })
+
+    except Exception as e:
+        logger.error(f"send_bulk_tokens error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/email/pending-students', methods=['GET'])
+@require_auth
+@require_role('admin')
+def get_pending_students():
+    """
+    Get list of students who haven't completed registration (no embeddings).
+    Admin only.
+    """
+    try:
+        # Get all students
+        all_students = database.get_all_students_cached()
+
+        # Filter students without embeddings (haven't registered)
+        pending = []
+        for student in all_students:
+            embeddings = database.get_embeddings_by_student(student['id'])
+            if not embeddings:  # No embeddings = hasn't registered yet
+                pending.append({
+                    'id': student['id'],
+                    'name': student['name'],
+                    'roll_no': student.get('roll_no', ''),
+                    'email': student.get('email', ''),
+                    'status': 'pending'
+                })
+
+        return jsonify({
+            'pending_students': pending,
+            'total_pending': len(pending),
+            'total_students': len(all_students)
+        })
+
+    except Exception as e:
+        logger.error(f"get_pending_students error: {e}")
+        return jsonify({'error': str(e)}), 500
+
 if __name__ == '__main__':
     logger.info("Starting Face Recognition Attendance System Backend...")
     logger.info(f"Confidence threshold: {CONFIDENCE_THRESHOLD}")
     app.run(host='0.0.0.0', port=5000, debug=False)  # Disable debug mode to avoid reloader issues
+

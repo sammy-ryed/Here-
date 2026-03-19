@@ -23,6 +23,13 @@ numpy==1.26.4
 # Machine Learning (Python 3.13 compatible)
 scikit-learn==1.5.2
 
+# Database — PostgreSQL
+psycopg2-binary>=2.9.9
+
+# Authentication
+PyJWT>=2.8.0
+bcrypt>=4.1.2
+
 # Utilities
 python-dotenv==1.0.0
 requests==2.31.0

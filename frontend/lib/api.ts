@@ -8,6 +8,33 @@ const api = axios.create({
   timeout: 120000, // 2 minutes for face processing
 });
 
+// Add authorization header to all requests
+api.interceptors.request.use(
+  (config) => {
+    const token = localStorage.getItem('auth_token');
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+  },
+  (error) => Promise.reject(error)
+);
+
+// Handle 401 responses by clearing token
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      localStorage.removeItem('auth_token');
+      localStorage.removeItem('user_info');
+      if (typeof window !== 'undefined') {
+        window.location.href = '/login';
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
 export const apiClient = {
   // Health check
   checkHealth: async (): Promise<boolean> => {
@@ -32,10 +59,11 @@ export const apiClient = {
   },
 
   // Register new student
-  registerStudent: async (name: string, rollNo: string, images: File[]): Promise<void> => {
+  registerStudent: async (name: string, rollNo: string, email: string, images: File[]): Promise<void> => {
     const formData = new FormData();
     formData.append('name', name);
     formData.append('roll_no', rollNo);
+    formData.append('email', email);
     images.forEach((image) => {
       formData.append('images', image);
     });
@@ -85,32 +113,6 @@ export const apiClient = {
   // Delete student
   deleteStudent: async (studentId: number): Promise<void> => {
     await api.delete(`/students/${studentId}`);
-  },
-
-  // Recognize face from base64 image (for live attendance)
-  recognizeFace: async (imageBase64: string): Promise<Student | null> => {
-    try {
-      const response = await api.post<{
-        name: string | null;
-        student_id?: number;
-        roll_no?: string;
-        similarity?: number;
-      }>('/recognize/face', {
-        image: imageBase64,
-      });
-      
-      if (response.data.name && response.data.student_id) {
-        return {
-          id: response.data.student_id,
-          name: response.data.name,
-          roll_no: response.data.roll_no || '',
-          confidence: response.data.similarity,
-        };
-      }
-      return null;
-    } catch {
-      return null;
-    }
   },
 
   // Manual attendance marking
@@ -165,6 +167,119 @@ export const apiClient = {
       headers: { 'Content-Type': 'multipart/form-data' },
       timeout: 300000,
     });
+    return response.data;
+  },
+
+  // ── AUTHENTICATION ──────────────────────────────────────────
+  login: async (username: string, password: string): Promise<{ token: string; username: string; role: string; user_id: number }> => {
+    const response = await api.post('/auth/login', { username, password });
+    return response.data;
+  },
+
+  logout: async (): Promise<void> => {
+    await api.post('/auth/logout');
+  },
+
+  // ── ATTENDANCE REPORTS ──────────────────────────────────────
+  getAttendanceReport: async (startDate?: string, endDate?: string): Promise<any> => {
+    const params = {
+      start_date: startDate,
+      end_date: endDate,
+    };
+    const response = await api.get('/attendance/report', { params });
+    return response.data;
+  },
+
+  clearTodayAttendance: async (): Promise<{ success: boolean; message: string }> => {
+    const response = await api.post('/attendance/clear-today', {});
+    return response.data;
+  },
+
+  // ── STUDENT MANAGEMENT ──────────────────────────────────────
+  getStudentById: async (studentId: number): Promise<Student> => {
+    const response = await api.get<Student>(`/students/${studentId}`);
+    return response.data;
+  },
+
+  clearAllStudents: async (): Promise<{ success: boolean; message: string }> => {
+    const response = await api.delete('/students/clear-all');
+    return response.data;
+  },
+
+  // ── UNRECOGNIZED FACES ──────────────────────────────────────
+  getUnrecognizedFace: async (filename: string): Promise<Blob> => {
+    const response = await api.get(`/unrecognized/${filename}`, { responseType: 'blob' });
+    return response.data;
+  },
+
+  // ── LIVE FACE RECOGNITION ──────────────────────────────────
+  recognizeFace: async (base64Image: string): Promise<{ name: string | null; student_id?: number; roll_no?: string; similarity?: number; attendance_marked?: boolean; processing_time_ms?: number }> => {
+    const response = await api.post('/recognize/face', { image: base64Image });
+    return response.data;
+  },
+
+  // ── SECTIONS ────────────────────────────────────────────────
+  getSections: async (): Promise<{ sections: any[]; total: number }> => {
+    const response = await api.get('/sections');
+    return response.data;
+  },
+
+  createSection: async (name: string, year?: string, department?: string, batch?: string): Promise<{ success: boolean; section_id: number; name: string }> => {
+    const response = await api.post('/sections', { name, year, department, batch });
+    return response.data;
+  },
+
+  // ── SUBJECTS ────────────────────────────────────────────────
+  getSubjects: async (sectionId: number): Promise<{ subjects: any[]; section_id: number; total: number }> => {
+    const response = await api.get(`/sections/${sectionId}/subjects`);
+    return response.data;
+  },
+
+  createSubject: async (name: string, code: string, sectionId: number): Promise<{ success: boolean; subject_id: number }> => {
+    const response = await api.post('/subjects', { name, code, section_id: sectionId });
+    return response.data;
+  },
+
+  // ── TEACHER-SECTION ASSIGNMENTS ────────────────────────────
+  getTeacherSections: async (): Promise<{ teacher_sections: any[]; total: number }> => {
+    const response = await api.get('/teacher-sections');
+    return response.data;
+  },
+
+  assignTeacherSection: async (teacherId: number, sectionId: number): Promise<{ success: boolean; teacher_id: number; section_id: number }> => {
+    const response = await api.post('/teacher-sections', { teacher_id: teacherId, section_id: sectionId });
+    return response.data;
+  },
+
+  // ── SESSIONS ────────────────────────────────────────────────
+  getSessions: async (): Promise<{ sessions: any[]; total: number }> => {
+    const response = await api.get('/sessions');
+    return response.data;
+  },
+
+  createSession: async (sectionId: number, subjectId: number, gpsLat?: number, gpsLon?: number): Promise<{ success: boolean; session_id: number; status: string }> => {
+    const response = await api.post('/sessions', {
+      section_id: sectionId,
+      subject_id: subjectId,
+      teacher_gps_lat: gpsLat,
+      teacher_gps_lon: gpsLon,
+    });
+    return response.data;
+  },
+
+  confirmSession: async (sessionId: number): Promise<{ success: boolean; session_id: number; status: string }> => {
+    const response = await api.put(`/sessions/${sessionId}/confirm`, {});
+    return response.data;
+  },
+
+  voidSession: async (sessionId: number): Promise<{ success: boolean; session_id: number; status: string }> => {
+    const response = await api.put(`/sessions/${sessionId}/void`, {});
+    return response.data;
+  },
+
+  // ── STUDENT-SECTION ASSIGNMENT ──────────────────────────────
+  updateStudentSection: async (studentId: number, sectionId: number): Promise<{ success: boolean }> => {
+    const response = await api.put(`/students/${studentId}/section`, { section_id: sectionId });
     return response.data;
   },
 };
