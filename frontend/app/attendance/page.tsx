@@ -97,27 +97,27 @@ export default function TakeAttendance() {
   };
 
   return (
-    <div className="max-w-7xl mx-auto px-6 py-8">
-      <div className="mb-8">
-        <h1 className="text-2xl font-semibold text-gray-900">Process Attendance</h1>
-        <p className="text-sm text-gray-600 mt-1">Upload 1–7 classroom photos to automatically mark attendance</p>
+    <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 md:px-8 py-4 sm:py-8">
+      <div className="mb-6 sm:mb-8">
+        <h1 className="text-xl sm:text-2xl font-semibold text-gray-900">Process Attendance</h1>
+        <p className="text-xs sm:text-sm text-gray-600 mt-1">Upload 1–7 classroom photos to automatically mark attendance</p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-white border border-gray-200 p-6 space-y-4">
-          <h2 className="text-lg font-semibold text-gray-900">Upload Photos</h2>
+        <div className="bg-white border border-gray-200 p-4 sm:p-6 space-y-4">
+          <h2 className="text-base sm:text-lg font-semibold text-gray-900">Upload Photos</h2>
 
-          <div className="flex items-center space-x-3">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
             <button
               onClick={() => fileInputRef.current?.click()}
-              className="flex items-center space-x-2 px-4 py-2 bg-slate-900 text-white text-sm font-medium hover:bg-slate-800"
+              className="flex items-center gap-2 px-3 sm:px-4 py-2 bg-slate-900 text-white text-xs sm:text-sm font-medium hover:bg-slate-800 rounded whitespace-nowrap"
             >
               <Upload size={16} />
               <span>Add Photos</span>
             </button>
             <button
               onClick={() => setShowWebcam(!showWebcam)}
-              className="flex items-center space-x-2 px-4 py-2 border border-gray-300 text-gray-700 text-sm font-medium hover:bg-gray-50"
+              className="flex items-center gap-2 px-3 sm:px-4 py-2 border border-gray-300 text-gray-700 text-xs sm:text-sm font-medium hover:bg-gray-50 rounded whitespace-nowrap"
             >
               <Camera size={16} />
               <span>{showWebcam ? 'Hide' : 'Capture'}</span>
@@ -139,13 +139,13 @@ export default function TakeAttendance() {
           />
 
           {showWebcam && (
-            <div className="border border-gray-200 p-3">
-              <Webcam ref={webcamRef} audio={false} screenshotFormat="image/jpeg" className="w-full mb-3" />
-              <div className="flex space-x-2">
-                <button onClick={capturePhoto} className="px-4 py-2 bg-slate-900 text-white text-sm font-medium hover:bg-slate-800">
+            <div className="border border-gray-200 p-2 sm:p-3 space-y-2">
+              <Webcam ref={webcamRef} audio={false} screenshotFormat="image/jpeg" className="w-full rounded" />
+              <div className="flex gap-2">
+                <button onClick={capturePhoto} className="flex-1 px-3 sm:px-4 py-2 bg-slate-900 text-white text-xs sm:text-sm font-medium hover:bg-slate-800 rounded">
                   Capture
                 </button>
-                <button onClick={() => setShowWebcam(false)} className="px-4 py-2 border border-gray-300 text-gray-700 text-sm font-medium hover:bg-gray-50">
+                <button onClick={() => setShowWebcam(false)} className="flex-1 px-3 sm:px-4 py-2 border border-gray-300 text-gray-700 text-xs sm:text-sm font-medium hover:bg-gray-50 rounded">
                   Cancel
                 </button>
               </div>
@@ -153,7 +153,7 @@ export default function TakeAttendance() {
           )}
 
           {previews.length === 0 && !showWebcam && (
-            <div className="border-2 border-dashed border-gray-200 p-10 text-center text-sm text-gray-400">
+            <div className="border-2 border-dashed border-gray-200 p-6 sm:p-10 text-center text-xs sm:text-sm text-gray-400 rounded">
               Upload up to 7 classroom photos for better coverage
             </div>
           )}
@@ -165,11 +165,11 @@ export default function TakeAttendance() {
               </p>
               <div className="grid grid-cols-3 gap-2">
                 {previews.map((src, i) => (
-                  <div key={i} className="relative group">
-                    <img src={src} alt={`Photo ${i + 1}`} className="w-full h-28 object-cover border border-gray-200" />
+                  <div key={i} className="relative group aspect-square">
+                    <img src={src} alt={`Photo ${i + 1}`} className="w-full h-full object-cover border border-gray-200 rounded" />
                     <button
                       onClick={() => removePhoto(i)}
-                      className="absolute top-1 right-1 p-1 bg-white border border-gray-300 text-red-600 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-opacity"
+                      className="absolute top-1 right-1 p-1 bg-white border border-gray-300 text-red-600 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-opacity rounded"
                     >
                       <X size={12} />
                     </button>
@@ -183,19 +183,19 @@ export default function TakeAttendance() {
             <button
               onClick={processAttendance}
               disabled={loading}
-              className="w-full py-2.5 bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 disabled:bg-gray-300"
+              className="w-full py-2.5 bg-slate-900 text-white text-xs sm:text-sm font-medium hover:bg-slate-800 disabled:bg-gray-300 rounded"
             >
               {loading ? 'Processing...' : `Process ${photos.length > 1 ? `${photos.length} Photos` : 'Attendance'}`}
             </button>
           )}
 
           {error && (
-            <div className="p-3 bg-red-50 border border-red-200 text-red-700 text-sm">{error}</div>
+            <div className="p-3 bg-red-50 border border-red-200 text-red-700 text-xs sm:text-sm rounded">{error}</div>
           )}
         </div>
 
-        <div className="bg-white border border-gray-200 p-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Results</h2>
+        <div className="bg-white border border-gray-200 p-4 sm:p-6 rounded">
+          <h2 className="text-base sm:text-lg font-semibold text-gray-900 mb-4">Results</h2>
 
           {!result ? (
             <div className="text-center text-gray-500 py-16 text-sm">

@@ -99,10 +99,10 @@ export default function Dashboard() {
 
   if (error) {
     return (
-      <div className="container mx-auto px-4 py-8">
-        <div className="bg-red-50 border border-red-200 rounded-lg p-6">
-          <p className="text-red-700">{error}</p>
-          <button onClick={loadData} className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700">
+      <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 md:px-8 py-4 sm:py-8">
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4 sm:p-6">
+          <p className="text-sm sm:text-base text-red-700">{error}</p>
+          <button onClick={loadData} className="mt-4 px-4 py-2 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700">
             Retry
           </button>
         </div>
@@ -111,90 +111,90 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="max-w-7xl mx-auto px-6 py-8">
-      <div className="mb-8">
-        <h1 className="text-2xl font-semibold text-gray-900">Dashboard</h1>
-        <p className="text-sm text-gray-600 mt-1">Overview of attendance metrics and student records</p>
+    <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 md:px-8 py-4 sm:py-8">
+      <div className="mb-6 sm:mb-8">
+        <h1 className="text-xl sm:text-2xl font-semibold text-gray-900">Dashboard</h1>
+        <p className="text-xs sm:text-sm text-gray-600 mt-1">Overview of attendance metrics and student records</p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-        <div className="bg-white border border-gray-200 p-5">
-          <div className="flex items-start justify-between">
-            <div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6 sm:mb-8">
+        <div className="bg-white border border-gray-200 p-4 sm:p-5 rounded">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex-1 min-w-0">
               <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Total Students</p>
-              <p className="text-2xl font-semibold text-gray-900 mt-2">{stats?.total_students || 0}</p>
+              <p className="text-xl sm:text-2xl font-semibold text-gray-900 mt-2">{stats?.total_students || 0}</p>
             </div>
-            <div className="p-2 bg-gray-50">
+            <div className="p-2 bg-gray-50 shrink-0">
               <Users className="text-gray-600" size={20} />
             </div>
           </div>
         </div>
-        <div className="bg-white border border-gray-200 p-5">
-          <div className="flex items-start justify-between">
-            <div>
+        <div className="bg-white border border-gray-200 p-4 sm:p-5 rounded">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex-1 min-w-0">
               <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Present Today</p>
-              <p className="text-2xl font-semibold text-gray-900 mt-2">{stats?.present_today || 0}</p>
+              <p className="text-xl sm:text-2xl font-semibold text-gray-900 mt-2">{stats?.present_today || 0}</p>
             </div>
-            <div className="p-2 bg-emerald-50">
+            <div className="p-2 bg-emerald-50 shrink-0">
               <UserCheck className="text-emerald-600" size={20} />
             </div>
           </div>
         </div>
-        <div className="bg-white border border-gray-200 p-5">
-          <div className="flex items-start justify-between">
-            <div>
+        <div className="bg-white border border-gray-200 p-4 sm:p-5 rounded">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex-1 min-w-0">
               <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Absent Today</p>
-              <p className="text-2xl font-semibold text-gray-900 mt-2">{stats?.absent_today || 0}</p>
+              <p className="text-xl sm:text-2xl font-semibold text-gray-900 mt-2">{stats?.absent_today || 0}</p>
             </div>
-            <div className="p-2 bg-red-50">
+            <div className="p-2 bg-red-50 shrink-0">
               <UserX className="text-red-600" size={20} />
             </div>
           </div>
         </div>
-        <div className="bg-white border border-gray-200 p-5">
-          <div className="flex items-start justify-between">
-            <div>
+        <div className="bg-white border border-gray-200 p-4 sm:p-5 rounded">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex-1 min-w-0">
               <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Attendance Rate</p>
-              <p className="text-2xl font-semibold text-gray-900 mt-2">{stats?.attendance_rate.toFixed(1)}%</p>
+              <p className="text-xl sm:text-2xl font-semibold text-gray-900 mt-2">{stats?.attendance_rate.toFixed(1)}%</p>
             </div>
-            <div className="p-2 bg-blue-50">
+            <div className="p-2 bg-blue-50 shrink-0">
               <TrendingUp className="text-blue-600" size={20} />
             </div>
           </div>
         </div>
       </div>
 
-      <div className="bg-white border border-gray-200">
-        <div className="px-6 py-4 border-b border-gray-200">
-          <h2 className="text-lg font-semibold text-gray-900">Student Records</h2>
+      <div className="bg-white border border-gray-200 rounded">
+        <div className="px-4 sm:px-6 py-3 sm:py-4 border-b border-gray-200">
+          <h2 className="text-base sm:text-lg font-semibold text-gray-900">Student Records</h2>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full">
+          <table className="w-full text-sm">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">ID</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Roll No</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
+                <th className="px-4 sm:px-6 py-2 sm:py-3 text-left text-xs font-medium text-gray-500 uppercase">ID</th>
+                <th className="px-4 sm:px-6 py-2 sm:py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
+                <th className="px-4 sm:px-6 py-2 sm:py-3 text-left text-xs font-medium text-gray-500 uppercase hidden sm:table-cell">Roll No</th>
+                <th className="px-4 sm:px-6 py-2 sm:py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                <th className="px-4 sm:px-6 py-2 sm:py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
               {students.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-6 py-8 text-center text-gray-500">
+                  <td colSpan={5} className="px-4 sm:px-6 py-8 text-center text-gray-500 text-sm">
                     No students registered yet. Add your first student from the Register page.
                   </td>
                 </tr>
               ) : (
                 students.map((student) => (
                   <tr key={student.id} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 text-sm text-gray-900">{student.id}</td>
-                    <td className="px-6 py-4 text-sm font-medium text-gray-900">{student.name}</td>
-                    <td className="px-6 py-4 text-sm text-gray-600">{student.roll_no}</td>
-                    <td className="px-6 py-4 text-sm">
-                      <div className="flex items-center space-x-2">
-                        <span className={`px-2.5 py-0.5 text-xs font-medium ${
+                    <td className="px-4 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm text-gray-900">{student.id}</td>
+                    <td className="px-4 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm font-medium text-gray-900">{student.name}</td>
+                    <td className="px-4 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm text-gray-600 hidden sm:table-cell">{student.roll_no}</td>
+                    <td className="px-4 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm">
+                      <div className="flex items-center flex-wrap gap-2">
+                        <span className={`px-2 py-0.5 text-xs font-medium rounded ${
                           student.attendance_status === 'present' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
                           student.attendance_status === 'absent' ? 'bg-red-50 text-red-700 border border-red-200' :
                           'bg-gray-50 text-gray-700 border border-gray-200'
@@ -216,18 +216,18 @@ export default function Dashboard() {
                         )}
                       </div>
                     </td>
-                    <td className="px-6 py-4 text-sm">
-                      <div className="flex items-center space-x-2">
+                    <td className="px-4 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm">
+                      <div className="flex items-center gap-1 sm:gap-2">
                         <button
                           onClick={() => handleMarkAttendance(student.id, 'present', student.name)}
-                          className="px-2 py-1 text-xs bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100"
+                          className="px-2 py-1 text-xs bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 rounded"
                           title="Mark Present"
                         >
                           P
                         </button>
                         <button
                           onClick={() => handleMarkAttendance(student.id, 'absent', student.name)}
-                          className="px-2 py-1 text-xs bg-red-50 text-red-700 border border-red-200 hover:bg-red-100"
+                          className="px-2 py-1 text-xs bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 rounded"
                           title="Mark Absent"
                         >
                           A

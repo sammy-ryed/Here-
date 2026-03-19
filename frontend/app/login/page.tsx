@@ -42,62 +42,63 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="max-w-md mx-auto px-6 py-16">
-      <div className="mb-8">
-        <h1 className="text-2xl font-semibold text-gray-900">Login</h1>
-        <p className="text-sm text-gray-600 mt-1">Sign in to your account</p>
-      </div>
+    <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4 py-6 sm:px-6 sm:py-8">
+      <div className="w-full max-w-sm">
+        <div className="mb-8">
+          <h1 className="text-2xl sm:text-3xl font-semibold text-gray-900">Login</h1>
+          <p className="text-sm text-gray-600 mt-1">Sign in to your account</p>
+        </div>
 
-      <div className="bg-white border border-gray-200 rounded-lg p-8">
-        {/* Error Message */}
-        {error && (
-          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
-            <p className="text-sm text-red-700">{error}</p>
-          </div>
-        )}
+        <div className="bg-white border border-gray-200 rounded-lg p-6 sm:p-8">
+          {/* Error Message */}
+          {error && (
+            <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
+              <p className="text-sm text-red-700">{error}</p>
+            </div>
+          )}
 
-        {/* Form */}
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Username */}
-          <div>
-            <label htmlFor="username" className="block text-sm font-medium text-gray-700 mb-2">
-              Username
-            </label>
-            <input
-              id="username"
-              type="text"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              placeholder="Enter your username"
-              className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition"
-              disabled={isLoading}
-              autoFocus
-            />
-          </div>
+          {/* Form */}
+          <form onSubmit={handleSubmit} className="space-y-4 sm:space-y-5">
+            {/* Username */}
+            <div>
+              <label htmlFor="username" className="block text-sm font-medium text-gray-700 mb-2">
+                Username
+              </label>
+              <input
+                id="username"
+                type="text"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="Enter your username"
+                className="w-full px-3 sm:px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition text-sm sm:text-base"
+                disabled={isLoading}
+                autoFocus
+              />
+            </div>
 
-          {/* Password */}
-          <div>
-            <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-2">
-              Password
-            </label>
-            <input
-              id="password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Enter your password"
-              className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition"
-              disabled={isLoading}
-            />
-          </div>
+            {/* Password */}
+            <div>
+              <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-2">
+                Password
+              </label>
+              <input
+                id="password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Enter your password"
+                className="w-full px-3 sm:px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition text-sm sm:text-base"
+                disabled={isLoading}
+              />
+            </div>
 
-          {/* Submit Button */}
-          <button
-            type="submit"
-            disabled={isLoading || !username || !password}
-            className="w-full bg-blue-600 text-white font-medium py-2.5 px-4 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
-          >
-            {isLoading ? (
+            {/* Submit Button */}
+            <button
+              type="submit"
+              disabled={isLoading || !username || !password}
+              className="w-full bg-blue-600 text-white font-medium py-2.5 px-4 text-sm sm:text-base rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
+            >
+              {isLoading ? (
               <span className="flex items-center justify-center">
                 <span className="animate-spin inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full mr-2" />
                 Signing in...

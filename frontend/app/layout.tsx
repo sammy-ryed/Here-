@@ -9,6 +9,7 @@ const inter = Inter({ subsets: ["latin"] });
 export const metadata: Metadata = {
   title: "Face Recognition Attendance System",
   description: "Modern attendance system using face recognition",
+  viewport: "width=device-width, initial-scale=1.0, maximum-scale=5.0",
 };
 
 export default function RootLayout({
