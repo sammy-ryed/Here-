@@ -15,9 +15,9 @@ export default function Navigation() {
 
   const navItems = [
     { href: '/',             label: 'Dashboard',   icon: LayoutDashboard },
+    { href: '/attendance',   label: 'Attendance',  icon: Camera },
     { href: '/register',     label: 'Register',    icon: UserPlus },
     { href: '/bulk-import',  label: 'Bulk Import', icon: FileSpreadsheet },
-    { href: '/attendance',   label: 'Attendance',  icon: Camera },
     { href: '/embeddings',   label: 'Embeddings',  icon: FileImage },
   ];
 
