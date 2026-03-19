@@ -42,7 +42,7 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4 py-6 sm:px-6 sm:py-8">
+    <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 px-4 py-8 sm:py-12">
       <div className="w-full max-w-sm">
         <div className="mb-8">
           <h1 className="text-2xl sm:text-3xl font-semibold text-gray-900">Login</h1>
@@ -99,26 +99,27 @@ export default function LoginPage() {
               className="w-full bg-blue-600 text-white font-medium py-2.5 px-4 text-sm sm:text-base rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
             >
               {isLoading ? (
-              <span className="flex items-center justify-center">
-                <span className="animate-spin inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full mr-2" />
-                Signing in...
-              </span>
-            ) : (
-              'Sign In'
-            )}
-          </button>
-        </form>
-      </div>
+                <span className="flex items-center justify-center">
+                  <span className="animate-spin inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full mr-2" />
+                  Signing in...
+                </span>
+              ) : (
+                'Sign In'
+              )}
+            </button>
+          </form>
+        </div>
 
-      {/* Demo Credentials Info */}
-      <div className="mt-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
-        <p className="text-sm text-blue-900">
-          <strong>Demo Credentials:</strong><br />
-          <span className="text-blue-800">Username: </span>
-          <code className="bg-white px-1.5 py-0.5 rounded text-xs font-mono">admin</code><br />
-          <span className="text-blue-800">Password: </span>
-          <code className="bg-white px-1.5 py-0.5 rounded text-xs font-mono">Admin@here1</code>
-        </p>
+        {/* Demo Credentials Info */}
+        <div className="mt-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
+          <p className="text-sm text-blue-900">
+            <strong>Demo Credentials:</strong><br />
+            <span className="text-blue-800">Username: </span>
+            <code className="bg-white px-1.5 py-0.5 rounded text-xs font-mono">admin</code><br />
+            <span className="text-blue-800">Password: </span>
+            <code className="bg-white px-1.5 py-0.5 rounded text-xs font-mono">Admin@here1</code>
+          </p>
+        </div>
       </div>
     </div>
   );
